@@ -1,12 +1,12 @@
 import os
 import json
 
-from PyQt6.QtWidgets import (
+from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QPushButton, QLineEdit, QFileDialog, QMessageBox, QScrollArea,
     QWidget, QTabWidget, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt
+from qtpy.QtCore import Qt
 
 class WorkflowEditor(QDialog):
     """

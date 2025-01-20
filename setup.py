@@ -12,6 +12,7 @@ setup(
         'PyQt6-Qt6<=6.7.3',
         'PyQt6_sip<=13.8.0',
         'requests',
+        'qtpy',
         'av'
     ],
     entry_points={

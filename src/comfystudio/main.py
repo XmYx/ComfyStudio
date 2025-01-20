@@ -9,20 +9,20 @@ import requests
 import urllib
 import copy
 
-from PyQt6.QtCore import (
+from qtpy.QtCore import (
     Qt, QUrl, QSize, QTimer, QStandardPaths, QPoint
 )
-from PyQt6.QtGui import (
+from qtpy.QtGui import (
     QAction, QPixmap, QIcon, QColor
 )
-from PyQt6.QtWidgets import (
+from qtpy.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
     QListWidgetItem, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QDockWidget, QMenuBar, QMenu, QPushButton, QLabel, QDialog,
     QComboBox, QMessageBox, QCheckBox, QTabWidget, QInputDialog
 )
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
+from qtpy.QtMultimediaWidgets import QVideoWidget
 
 class SettingsManager:
     def __init__(self):
@@ -48,12 +48,25 @@ class SettingsManager:
         self.load()
 
     def load(self):
+        # try:
+        #     if os.path.exists(self.settings_file):
+        #         with open(self.settings_file, "r") as f:
+        #             self.data.update(json.load(f))
+        # except:
+        #     pass
+
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, "r") as f:
                     self.data.update(json.load(f))
-        except:
-            pass
+            else:
+                # Load defaults from defaults/config.json if user_settings.json doesn't exist
+                default_config = os.path.join(os.path.dirname(__file__), "defaults", "config.json")
+                if os.path.exists(default_config):
+                    with open(default_config, "r") as df:
+                        self.data.update(json.load(df))
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
 
     def save(self):
         os.makedirs(os.path.dirname(self.settings_file), exist_ok=True)
@@ -287,8 +300,9 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.statusMessage, 1)
 
     def loadWorkflows(self):
-        image_dir = os.path.join(".", "workflows", "image")
-        video_dir = os.path.join(".", "workflows", "video")
+        base_dir = os.path.join(os.path.dirname(__file__), "workflows")
+        image_dir = os.path.join(base_dir, "image")
+        video_dir = os.path.join(base_dir, "video")
 
         self.image_workflows = []
         self.video_workflows = []
@@ -650,7 +664,7 @@ class MainWindow(QMainWindow):
         final_pix = QPixmap(120, 90)
         final_pix.fill(Qt.GlobalColor.transparent)
 
-        from PyQt6.QtGui import QPainter, QBrush, QPen
+        from qtpy.QtGui import QPainter, QBrush, QPen
         painter = QPainter(final_pix)
         painter.drawPixmap(0, 0, base_pix)
 
