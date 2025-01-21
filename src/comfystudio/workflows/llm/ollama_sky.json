@@ -1,0 +1,91 @@
+{
+  "2": {
+    "inputs": {
+      "text": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "JjkShowText",
+    "_meta": {
+      "title": "ShowText"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "You are a movie director aiding AGI with the single task of generating image prompts that depict a cohesive storyline based on the user's input. You must answer with only the English image prompts, each being very descriptive, and never assuming context between them, so you must repeat each and every image element, style that makes sure the output is cohesive visually and that it tells the story using cinematic shots.\n\nYou must answer with only the image prompts, each in a new line, without any empty lines, comment, or explanation.\n\nYou must make at least 100 starting image prompts.\n\nUser Input:\n"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "system prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "microcosmos, the strange world of tiny creatures"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "input prompt"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": [
+        "12",
+        0
+      ],
+      "path": "output/[time(%Y-%m-%d)]",
+      "filename_prefix": "ComfyUI",
+      "filename_delimiter": "_",
+      "filename_number_padding": 4,
+      "file_extension": ".txt",
+      "encoding": "utf-8",
+      "filename_suffix": ""
+    },
+    "class_type": "Save Text File",
+    "_meta": {
+      "title": "Save Text File"
+    }
+  },
+  "11": {
+    "inputs": {
+      "value": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "UnloadAllModels",
+    "_meta": {
+      "title": "UnloadAllModels"
+    }
+  },
+  "12": {
+    "inputs": {
+      "prompt": [
+        "4",
+        0
+      ],
+      "debug": false,
+      "url": "http://127.0.0.1:11434",
+      "model": "medragondot/Sky-T1-32B-Preview:latest",
+      "system": [
+        "11",
+        0
+      ],
+      "seed": 1592379308,
+      "top_k": 40,
+      "top_p": 0.9,
+      "temperature": 0.8,
+      "num_predict": -1,
+      "tfs_z": 1,
+      "keep_alive": 1,
+      "keep_context": false,
+      "format": "text"
+    },
+    "class_type": "OllamaGenerateAdvance",
+    "_meta": {
+      "title": "Ollama Generate Advance"
+    }
+  }
+}

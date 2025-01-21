@@ -32,6 +32,8 @@ class SettingsManager:
             "user_settings.json"
         )
         self.data = {
+            "comfy_py_path": "",
+            "comfy_main_path": "",
             "comfy_ip": "http://localhost:8188",
             "default_shot_params": [],
             "default_image_params": [],
@@ -48,13 +50,6 @@ class SettingsManager:
         self.load()
 
     def load(self):
-        # try:
-        #     if os.path.exists(self.settings_file):
-        #         with open(self.settings_file, "r") as f:
-        #             self.data.update(json.load(f))
-        # except:
-        #     pass
-
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, "r") as f:
@@ -90,6 +85,10 @@ class SettingsDialog(QDialog):
         self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
         layout.addRow("ComfyUI IP/Port:", self.comfyIpEdit)
 
+        self.comfyPyPathEdit = QLineEdit(self.settingsManager.get("comfy_py_path", ""))
+        layout.addRow("Comfy Python Path:", self.comfyPyPathEdit)
+        self.comfyMainPathEdit = QLineEdit(self.settingsManager.get("comfy_main_path", ""))
+        layout.addRow("Comfy Main Path:", self.comfyMainPathEdit)
         btnLayout = QHBoxLayout()
         okBtn = QPushButton("OK")
         cancelBtn = QPushButton("Cancel")
@@ -102,6 +101,8 @@ class SettingsDialog(QDialog):
 
     def accept(self):
         self.settingsManager.set("comfy_ip", self.comfyIpEdit.text().strip())
+        self.settingsManager.set("comfy_py_path", self.comfyPyPathEdit.text().strip())
+        self.settingsManager.set("comfy_main_path", self.comfyMainPathEdit.text().strip())
         self.settingsManager.save()
         super().accept()
 
@@ -135,6 +136,7 @@ class MainWindow(QMainWindow):
         self.video_workflows = []
 
         self.initUI()
+        self.loadPlugins()
         self.loadWorkflows()
         self.updateList()
 
@@ -235,7 +237,21 @@ class MainWindow(QMainWindow):
         # Populate global param forms
         self.refreshGlobalImageParams()
         self.refreshGlobalVideoParams()
-
+    def loadPlugins(self):
+        plugins_dir = os.path.join(os.path.dirname(__file__), "plugins")
+        if not os.path.isdir(plugins_dir):
+            return
+        sys.path.insert(0, plugins_dir)
+        for filename in os.listdir(plugins_dir):
+            if filename.endswith(".py") and not filename.startswith("__"):
+                modulename = filename[:-3]
+                try:
+                    module = __import__(modulename)
+                    if hasattr(module, "register"):
+                        module.register(self)
+                except Exception as e:
+                    print(f"Error loading plugin {modulename}: {e}")
+        sys.path.pop(0)
     def createMenuBar(self):
         menuBar = QMenuBar(self)
 
@@ -285,11 +301,16 @@ class MainWindow(QMainWindow):
         toolbar.addAction(renderAllStillsBtn)
         toolbar.addAction(renderAllVideosBtn)
         toolbar.addAction(stopRenderingBtn)
-
+        self.startComfyBtn = QAction("Start Comfy", self)
+        self.stopComfyBtn = QAction("Stop Comfy", self)
+        toolbar.addAction(self.startComfyBtn)
+        toolbar.addAction(self.stopComfyBtn)
         renderAllStillsBtn.triggered.connect(self.onGenerateAllStills)
         renderAllVideosBtn.triggered.connect(self.onGenerateAllVideos)
         stopRenderingBtn.triggered.connect(self.stopRendering)
 
+        self.startComfyBtn.triggered.connect(self.startComfy)
+        self.stopComfyBtn.triggered.connect(self.stopComfy)
     def stopRendering(self):
         self.renderQueue.clear()
         self.statusMessage.setText("Render queue cleared.")
@@ -298,6 +319,20 @@ class MainWindow(QMainWindow):
         self.status = self.statusBar()
         self.statusMessage = QLabel("Ready")
         self.status.addPermanentWidget(self.statusMessage, 1)
+    def startComfy(self):
+        import subprocess
+        py_path = self.settingsManager.get("comfy_py_path")
+        main_path = self.settingsManager.get("comfy_main_path")
+        if py_path and main_path:
+            self.comfy_process = subprocess.Popen([py_path, main_path])
+            self.statusMessage.setText("Comfy started.")
+        else:
+            QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
+
+    def stopComfy(self):
+        if hasattr(self, 'comfy_process'):
+            self.comfy_process.terminate()
+            self.statusMessage.setText("Comfy stopped.")
 
     def loadWorkflows(self):
         base_dir = os.path.join(os.path.dirname(__file__), "workflows")
