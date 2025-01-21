@@ -233,11 +233,12 @@ def run_shot_wizard(app):
         if "text" in inputs.keys():
             # This node has a single 'text' string
             title = node_data.get("_meta", {}).get("title", f"Node {node_id}")
-
-            print(inputs)
             if 'prompt' in title:
                 editable_nodes.append((node_id, title, inputs["text"]))
-
+        if "seed" in inputs.keys():
+            title = node_data.get("_meta", {}).get("title", f"Node {node_id}")
+            if "generate" in title.lower():
+                editable_nodes.append((node_id, title, inputs["seed"]))
     # If no editable nodes found, proceed. Otherwise, show a dialog with multiline edits.
     if editable_nodes:
         edited_data = showNodeEditorDialog(app, editable_nodes)
