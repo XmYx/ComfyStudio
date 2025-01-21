@@ -13,6 +13,7 @@ setup(
         'PyQt6_sip<=13.8.0',
         'requests',
         'qtpy',
+        'opencv-contrib-python',
         'av'
     ],
     entry_points={

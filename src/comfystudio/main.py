@@ -608,6 +608,8 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         deleteAction = menu.addAction("Delete Shot")
         duplicateAction = menu.addAction("Duplicate Shot")
+        extendAction = menu.addAction("Extend Clip")
+
 
         action = menu.exec(self.listWidget.mapToGlobal(pos))
         if action == deleteAction:
@@ -637,6 +639,8 @@ class MainWindow(QMainWindow):
 
             self.shots.append(new_shot)
             self.updateList()
+        elif action == extendAction:
+            self.extendClip(idx)
     def clearDock(self):
         for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
             while frm.rowCount() > 0:
@@ -1096,7 +1100,44 @@ class MainWindow(QMainWindow):
             if not video_path or (new_signature != last_sig):
                 self.queueShotRender(i, isVideo=True)
         self.startNextRender()
+    def extendClip(self, shotIndex):
+        import cv2, copy
+        shot = self.shots[shotIndex]
+        video_path = shot.get("videoPath", "")
+        if not video_path or not os.path.exists(video_path):
+            QMessageBox.information(self, "Info", "No video found for this shot.")
+            return
 
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            QMessageBox.warning(self, "Error", "Cannot open video file.")
+            return
+
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count - 1)
+        ret, frame = cap.read()
+        if not ret:
+            QMessageBox.warning(self, "Error", "Failed to read last frame.")
+            cap.release()
+            return
+
+        temp_dir = tempfile.gettempdir()
+        frame_filename = os.path.join(temp_dir, f"extracted_frame_{random.randint(0,999999)}.png")
+        cv2.imwrite(frame_filename, frame)
+        cap.release()
+
+        new_shot = copy.deepcopy(shot)
+        new_shot["name"] = f"{shot['name']} Extended"
+        new_shot["videoPath"] = ""
+        new_shot["videoVersions"] = []
+        new_shot["currentVideoVersion"] = -1
+        new_shot["stillPath"] = frame_filename
+        new_shot.setdefault("imageVersions", []).append(frame_filename)
+        new_shot["currentImageVersion"] = len(new_shot["imageVersions"]) - 1
+        new_shot["lastStillSignature"] = self.computeRenderSignature(new_shot, isVideo=False)
+
+        self.shots.insert(shotIndex + 1, new_shot)
+        self.updateList()
     def computeRenderSignature(self, shot, isVideo=False):
         """
         Incorporates shotParams, plus imageParams or videoParams accordingly,
