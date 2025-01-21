@@ -495,6 +495,8 @@ def run_shot_wizard(app):
             return
         for node_id, new_text in edited_data.items():
             workflow_json[node_id]["inputs"]["text"] = new_text
+            if workflow_json[node_id]["_meta"]["title"] == "input prompt":
+                input_prompt = new_text
 
     # Step 4: Send workflow to ComfyUI and poll result
     comfy_ip = app.settingsManager.get("comfy_ip", "http://localhost:8188").rstrip("/")
@@ -569,10 +571,16 @@ def run_shot_wizard(app):
         # Update seed and prompt_history in iteration workflow
         for node in iter_workflow.values():
             inputs = node.get("inputs", {})
+
+            if node.get("_meta", {}).get("title", "") == "prompt history":
+                inputs["text"] = previous_result_text
+            if node.get("_meta", {}).get("title", "") == "input prompt":
+                inputs["text"] = input_prompt
             if "seed" in inputs:
                 inputs["seed"] = random.randint(0, 2**31-1)
-            if "prompt_history" in inputs:
-                inputs["prompt_history"] = previous_result_text
+            # if "prompt_history" in inputs:
+            #     inputs["prompt_history"] = previous_result_text
+
 
         data = {"prompt": iter_workflow}
         try:
