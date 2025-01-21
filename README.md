@@ -15,11 +15,8 @@ Cinema Shot Designer is a graphical application designed to manage and render ci
 ## Installation
 
 1. Make sure you have Python 3.10 or higher installed.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Install the application:
+
+2. Install the application:
    ```bash
    python setup.py install
    ```
