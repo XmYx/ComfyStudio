@@ -1,0 +1,144 @@
+{
+  "1": {
+    "inputs": {
+      "value": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "UnloadAllModels",
+    "_meta": {
+      "title": "UnloadAllModels"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "You are a movie director AGI with the single task of generating image prompts that depict a cohesive storyline based on the user's input. You must answer with only the image prompts, each being very descriptive, and never assuming context between them, so you must repeat each and every image elemnt, style that makes sure the output is cohesive visually and that it tells the story using cinematic shots.\n\nYou must answer with only the image prompts, each in a new line, without any empty lines, comment, or explanation. You must ensure that the images represent the actual cohesive shots of a short movie, using cinematic terms, establishers and various camera angles. You must always stylize the images using words like: vhs style, panavision, shot on 35mm film, etc. You will be shown the previous set of prompts and you must continue the story cohesively according to the storyline.\n\nYou must generate the next 10 starting image prompts.\n\nUser Input:\n"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "Text Multiline"
+    }
+  },
+  "3": {
+    "inputs": {
+      "prompt": [
+        "9",
+        0
+      ],
+      "debug": false,
+      "url": "http://127.0.0.1:11434",
+      "model": "llama3.2:latest",
+      "system": [
+        "1",
+        0
+      ],
+      "seed": 1128362863,
+      "top_k": 40,
+      "top_p": 0.9,
+      "temperature": 0.8,
+      "num_predict": -1,
+      "tfs_z": 1,
+      "keep_alive": 1,
+      "keep_context": false,
+      "format": "text"
+    },
+    "class_type": "OllamaGenerateAdvance",
+    "_meta": {
+      "title": "Ollama Generate Advance"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ],
+      "path": "output/[time(%Y-%m-%d)]",
+      "filename_prefix": "ComfyUI",
+      "filename_delimiter": "_",
+      "filename_number_padding": 4,
+      "file_extension": ".txt",
+      "encoding": "utf-8",
+      "filename_suffix": ""
+    },
+    "class_type": "Save Text File",
+    "_meta": {
+      "title": "Save Text File"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "JjkShowText",
+    "_meta": {
+      "title": "ShowText"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "microcosmos, the strange world of tiny creatures"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "input prompt"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "A close-up shot of a dew-kissed spider's web, glistening in the morning light, as if frozen in time, with delicate threads radiating from a central hub, against a soft focus VHS-style background.\n\nThe camera pans down to reveal a miniature landscape of twisted twigs and leaves, set amidst a vast, open plain, shot on 35mm film, with warm golden tones and subtle texture, evoking a sense of nostalgia.\n\nA small, shiny beetle rolls across the screen, its metallic carapace reflecting the faint light of a distant sun, as the camera zooms in for a macro shot, emphasizing the intricate details of its armored shell.\n\nThe frame shifts to a close-up of a curious snail making its way slowly up a moss-covered stone, its slimy trail glistening like a ribbon of silver, shot on 16mm film with a subtle grain and soft focus, as if lost in time.\n\nA towering blade of grass stands sentinel, swaying gently in the breeze, against a bright blue sky with fluffy white clouds, captured in a Panavision shot that emphasizes its majestic presence.\n\nThe camera cuts to a group of ants marching in unison across the screen, their tiny legs moving in perfect synchrony, set against a stark, black-and-white VHS-style background that highlights their industrious nature.\n\nA delicate flower blooms in the foreground, its petals unfolding like a tiny, intricate puzzle, as the camera zooms out to reveal the vibrant colors and textures of the surrounding environment, shot on 35mm film with a soft focus that emphasizes its beauty.\n\nThe frame shifts to a group of aphids clustered on the tender shoots of a young plant, their tiny bodies glowing in the sunlight like a swarm of miniature stars, captured in a high-contrast black-and-white Panavision shot that highlights their vulnerability.\n\nA spider begins to spin its web anew, its spinnerets pumping out silken threads with a rhythmic motion, set against a soft focus VHS-style background that gives the scene a dreamlike quality.\n\nThe camera cuts to a tiny, translucent larva crawling through the soil beneath the roots of an ancient tree, its fragile body illuminated by the soft glow of underground fungi, shot on 16mm film with a subtle grain and soft focus.\n\nA family of field mice scurries across the screen, their small bodies darting in and out of hiding as they search for food, set against a warm, golden light that captures the coziness of their hidden world.\n\nThe frame shifts to a solitary dragonfly hovering above a still pond, its iridescent wings glimmering like stained glass, captured in a Panavision shot that emphasizes its majesty and vulnerability.\n\nA delicate droplet of dew clings to the edge of a leaf, glistening like a tiny jewel in the morning light, as the camera zooms in for an extreme close-up shot on 35mm film that highlights its intricate texture."
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "prompt history"
+    }
+  },
+  "8": {
+    "inputs": {
+      "text": "\nPrompt History:\n"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "fixed value"
+    }
+  },
+  "9": {
+    "inputs": {
+      "delimiter": "",
+      "clean_whitespace": "false",
+      "text_a": [
+        "10",
+        0
+      ],
+      "text_b": [
+        "6",
+        0
+      ],
+      "text_c": [
+        "8",
+        0
+      ],
+      "text_d": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "Text Concatenate",
+    "_meta": {
+      "title": "Text Concatenate"
+    }
+  },
+  "10": {
+    "inputs": {
+      "text": "User Input:\n\n"
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "fixed value"
+    }
+  }
+}

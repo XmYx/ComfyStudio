@@ -96,7 +96,7 @@ class WorkflowEditor(QDialog):
         self.imageLayout.addWidget(self.scrollImage, 3)
 
         # Populate the imageFileList from the folder
-        image_dir = os.path.join(".", "workflows", "image")
+        image_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workflows", "image")
         if os.path.isdir(image_dir):
             for fname in sorted(os.listdir(image_dir)):
                 if fname.lower().endswith(".json"):
@@ -105,7 +105,7 @@ class WorkflowEditor(QDialog):
 
     def onImageFileSelected(self, item):
         fname = item.text()
-        image_dir = os.path.join(".", "workflows", "image")
+        image_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workflows", "image")
         path = os.path.join(image_dir, fname)
         if os.path.exists(path):
             try:
@@ -180,7 +180,7 @@ class WorkflowEditor(QDialog):
         self.videoLayout.addWidget(self.videoFileList, 1)
         self.videoLayout.addWidget(self.scrollVideo, 3)
 
-        video_dir = os.path.join(".", "workflows", "video")
+        video_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workflows", "video")
         if os.path.isdir(video_dir):
             for fname in sorted(os.listdir(video_dir)):
                 if fname.lower().endswith(".json"):
@@ -189,7 +189,7 @@ class WorkflowEditor(QDialog):
 
     def onVideoFileSelected(self, item):
         fname = item.text()
-        video_dir = os.path.join(".", "workflows", "video")
+        video_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workflows", "video")
         path = os.path.join(video_dir, fname)
         if os.path.exists(path):
             try:

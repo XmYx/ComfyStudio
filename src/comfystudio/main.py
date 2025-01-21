@@ -145,8 +145,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.mainLayout = QVBoxLayout(central)
 
+        class ReorderableListWidget(QListWidget):
+            def dropEvent(self, event):
+                super().dropEvent(event)  # Perform the default drop behavior
+                # After the drop, update the parent’s shots order
+                if hasattr(self.parent(), 'syncShotsFromList'):
+                    self.parent().syncShotsFromList()
         # Shots list
-        self.listWidget = QListWidget()
+        self.listWidget = ReorderableListWidget()
         self.listWidget.setViewMode(self.listWidget.ViewMode.IconMode)
         self.listWidget.setFlow(self.listWidget.Flow.LeftToRight)
         self.listWidget.setWrapping(True)
@@ -157,6 +163,13 @@ class MainWindow(QMainWindow):
         self.listWidget.itemClicked.connect(self.onItemClicked)
         self.listWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.listWidget.customContextMenuRequested.connect(self.onListWidgetContextMenu)
+        self.listWidget.setDragEnabled(True)
+        self.listWidget.setAcceptDrops(True)
+        self.listWidget.setDropIndicatorShown(True)
+        self.listWidget.setDragDropMode(self.listWidget.DragDropMode.InternalMove)
+        self.listWidget.setMovement(self.listWidget.Movement.Free)
+        self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
 
         self.mainLayout.addWidget(self.listWidget)
 
@@ -237,6 +250,38 @@ class MainWindow(QMainWindow):
         # Populate global param forms
         self.refreshGlobalImageParams()
         self.refreshGlobalVideoParams()
+
+    def onShotsReordered(self, parent, start, end, destination, row):
+        print(start, end, destination, row)
+        # Extract the block of shots being moved
+        moved_block = self.shots[start:end + 1]
+
+        # Remove the moved items from their original positions
+        del self.shots[start:end + 1]
+
+        # Adjust the target insertion index if necessary.
+        # If the destination index is after the removed block, adjust for the removed items.
+        if row > start:
+            row -= (end - start + 1)
+
+        # Insert the moved block at the new position
+        for i, shot in enumerate(moved_block):
+            self.shots.insert(row + i, shot)
+
+        # Refresh the visual list to renumber items and update icons
+        self.updateList()
+
+    def syncShotsFromList(self):
+        new_order = []
+        for i in range(self.listWidget.count()):
+            item = self.listWidget.item(i)
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            # Skip the special "Add New Shot" item
+            if idx is None or idx == -1:
+                continue
+            new_order.append(self.shots[idx])
+        self.shots = new_order
+        self.updateList()
     def loadPlugins(self):
         plugins_dir = os.path.join(os.path.dirname(__file__), "plugins")
         if not os.path.isdir(plugins_dir):
@@ -364,7 +409,7 @@ class MainWindow(QMainWindow):
             self.videoWorkflowCombo.addItem(wf, os.path.join(video_dir, wf))
 
     def openWorkflowEditor(self):
-        from sdmodules.editor import WorkflowEditor
+        from comfystudio.sdmodules.editor import WorkflowEditor
         editor = WorkflowEditor(self.settingsManager, parent=self)
         editor.exec()
 

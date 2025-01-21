@@ -13,7 +13,7 @@
   },
   "3": {
     "inputs": {
-      "text": "You are a movie director aiding AGI with the single task of generating image prompts that depict a cohesive storyline based on the user's input. You must answer with only the English image prompts, each being very descriptive, and never assuming context between them, so you must repeat each and every image element, style that makes sure the output is cohesive visually and that it tells the story using cinematic shots.\n\nYou must answer with only the image prompts, each in a new line, without any empty lines, comment, or explanation.\n\nYou must make at least 100 starting image prompts.\n\nUser Input:\n"
+      "text": "You are a movie director aiding AGI with the single task of generating image prompts that depict a cohesive storyline based on the user's input. You must answer with only the image prompts, each being very descriptive, and never assuming context between them, so you must repeat each and every image elemnt, style that makes sure the output is cohesive visually and that it tells the story using cinematic shots.\n\nYou must answer with only the image prompts, each in a new line, without any empty lines, comment, or explanation.\n\nYou must make at least 100 starting image prompts.\n\nUser Input:\n"
     },
     "class_type": "Text Multiline",
     "_meta": {
