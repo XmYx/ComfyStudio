@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 import sys
 import os
 import json
@@ -10,16 +9,43 @@ import urllib
 import copy
 
 from qtpy.QtCore import (
-    Qt, QUrl, QSize, QTimer, QStandardPaths, QPoint
+    Qt,
+    QUrl,
+    QSize,
+    QTimer,
+    QStandardPaths,
+    QPoint
 )
 from qtpy.QtGui import (
-    QAction, QPixmap, QIcon, QColor
+    QAction,
+    QPixmap,
+    QIcon,
+    QColor
 )
 from qtpy.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-    QListWidgetItem, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QDockWidget, QMenuBar, QMenu, QPushButton, QLabel, QDialog,
-    QComboBox, QMessageBox, QCheckBox, QTabWidget, QInputDialog
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QListWidget,
+    QListWidgetItem,
+    QLineEdit,
+    QSpinBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QDockWidget,
+    QMenuBar,
+    QMenu,
+    QPushButton,
+    QLabel,
+    QDialog,
+    QComboBox,
+    QMessageBox,
+    QCheckBox,
+    QTabWidget,
+    QInputDialog
 )
 from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
 from qtpy.QtMultimediaWidgets import QVideoWidget
@@ -45,7 +71,8 @@ class SettingsManager:
                     "useShotImage": True,
                     "nodeIDs": ["1"]
                 },
-            ]
+            ],
+            "workflow_params": {}
         }
         self.load()
 
@@ -60,6 +87,8 @@ class SettingsManager:
                 if os.path.exists(default_config):
                     with open(default_config, "r") as df:
                         self.data.update(json.load(df))
+            if "workflow_params" not in self.data:
+                self.data["workflow_params"] = {}
         except Exception as e:
             print(f"Error loading configuration: {e}")
 
@@ -79,16 +108,14 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.settingsManager = settingsManager
-
         layout = QFormLayout(self)
-
         self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
         layout.addRow("ComfyUI IP/Port:", self.comfyIpEdit)
-
         self.comfyPyPathEdit = QLineEdit(self.settingsManager.get("comfy_py_path", ""))
         layout.addRow("Comfy Python Path:", self.comfyPyPathEdit)
         self.comfyMainPathEdit = QLineEdit(self.settingsManager.get("comfy_main_path", ""))
         layout.addRow("Comfy Main Path:", self.comfyMainPathEdit)
+
         btnLayout = QHBoxLayout()
         okBtn = QPushButton("OK")
         cancelBtn = QPushButton("Cancel")
@@ -111,30 +138,33 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Cinema Shot Designer")
         self.resize(1200, 800)
-
         self.settingsManager = SettingsManager()
-
-        self.globalImageParams = self.settingsManager.get("global_image_params", [])
-        self.globalVideoParams = self.settingsManager.get("global_video_params", [])
-        self.defaultShotParams = self.settingsManager.get("default_shot_params", [])
-        self.defaultImageParams = self.settingsManager.get("default_image_params", [])
-        self.defaultVideoParams = self.settingsManager.get("default_video_params", [])
-
+        self.globalImageParams = []
+        self.globalVideoParams = []
+        self.defaultShotParams = []
+        self.defaultImageParams = []
+        self.defaultVideoParams = self.settingsManager.get("default_video_params", [
+            {
+                "type": "image",
+                "name": "Image",
+                "value": "",
+                "useShotImage": True,
+                "nodeIDs": ["1"]
+            },
+        ])
         self.currentFilePath = None
         self.shots = []
         self.currentShotIndex = None
-
         self.last_prompt_id = None
         self.renderQueue = []
         self.activePrompts = {}
-
         self.result_timer = QTimer()
         self.result_timer.setInterval(2000)
         self.result_timer.timeout.connect(self.checkComfyResult)
-
         self.image_workflows = []
         self.video_workflows = []
-
+        self.current_image_workflow = None
+        self.current_video_workflow = None
         self.initUI()
         self.loadPlugins()
         self.loadWorkflows()
@@ -151,6 +181,7 @@ class MainWindow(QMainWindow):
                 # After the drop, update the parent’s shots order
                 if hasattr(self.parent(), 'syncShotsFromList'):
                     self.parent().syncShotsFromList()
+
         # Shots list
         self.listWidget = ReorderableListWidget()
         self.listWidget.setViewMode(self.listWidget.ViewMode.IconMode)
@@ -170,14 +201,12 @@ class MainWindow(QMainWindow):
         self.listWidget.setMovement(self.listWidget.Movement.Free)
         self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
-
         self.mainLayout.addWidget(self.listWidget)
 
         # Dock for shot parameters
         self.dock = QDockWidget("Shot Parameters", self)
         self.dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock)
-
         self.dockContents = QWidget()
         self.dockLayout = QVBoxLayout(self.dockContents)
         self.dockTabWidget = QTabWidget()
@@ -186,19 +215,14 @@ class MainWindow(QMainWindow):
         # We have 5 tabs: Global Image, Global Video, Shot Image, Shot Video, Shot Misc
         self.globalImageTab = QWidget()
         self.globalImageForm = QFormLayout(self.globalImageTab)
-
         self.globalVideoTab = QWidget()
         self.globalVideoForm = QFormLayout(self.globalVideoTab)
-
         self.imageTab = QWidget()
         self.imageForm = QFormLayout(self.imageTab)
-
         self.videoTab = QWidget()
         self.videoForm = QFormLayout(self.videoTab)
-
         self.currentShotTab = QWidget()
         self.currentShotForm = QFormLayout(self.currentShotTab)
-
         self.dockTabWidget.addTab(self.globalImageTab, "Global Image Params")
         self.dockTabWidget.addTab(self.globalVideoTab, "Global Video Params")
         self.dockTabWidget.addTab(self.imageTab, "Shot Image Params")
@@ -211,7 +235,6 @@ class MainWindow(QMainWindow):
         self.renderStillBtn = QPushButton("Render Still")
         renderLayout.addWidget(self.stillWorkflowCombo)
         renderLayout.addWidget(self.renderStillBtn)
-
         self.videoWorkflowCombo = QComboBox()
         self.renderVideoBtn = QPushButton("Render Video")
         renderLayout.addWidget(self.videoWorkflowCombo)
@@ -235,14 +258,14 @@ class MainWindow(QMainWindow):
         self.controlsLayout.addWidget(self.pauseBtn)
         self.controlsLayout.addWidget(self.stopBtn)
         self.dockLayout.addLayout(self.controlsLayout)
-
         self.playBtn.clicked.connect(self.player.play)
         self.pauseBtn.clicked.connect(self.player.pause)
         self.stopBtn.clicked.connect(self.player.stop)
+
         self.renderStillBtn.clicked.connect(self.onRenderStill)
         self.renderVideoBtn.clicked.connect(self.onRenderVideo)
-
         self.dock.setWidget(self.dockContents)
+
         self.createMenuBar()
         self.createToolBar()
         self.createStatusBar()
@@ -251,23 +274,23 @@ class MainWindow(QMainWindow):
         self.refreshGlobalImageParams()
         self.refreshGlobalVideoParams()
 
+        # Connect workflow combo box changes
+        self.stillWorkflowCombo.currentIndexChanged.connect(self.onStillWorkflowChanged)
+        self.videoWorkflowCombo.currentIndexChanged.connect(self.onVideoWorkflowChanged)
+
     def onShotsReordered(self, parent, start, end, destination, row):
         print(start, end, destination, row)
         # Extract the block of shots being moved
         moved_block = self.shots[start:end + 1]
-
         # Remove the moved items from their original positions
         del self.shots[start:end + 1]
-
         # Adjust the target insertion index if necessary.
         # If the destination index is after the removed block, adjust for the removed items.
         if row > start:
             row -= (end - start + 1)
-
         # Insert the moved block at the new position
         for i, shot in enumerate(moved_block):
             self.shots.insert(row + i, shot)
-
         # Refresh the visual list to renumber items and update icons
         self.updateList()
 
@@ -276,12 +299,12 @@ class MainWindow(QMainWindow):
         for i in range(self.listWidget.count()):
             item = self.listWidget.item(i)
             idx = item.data(Qt.ItemDataRole.UserRole)
-            # Skip the special "Add New Shot" item
-            if idx is None or idx == -1:
-                continue
+            # Skip the special "Add New Shot" item if idx is None or idx == -1:
+            continue
             new_order.append(self.shots[idx])
         self.shots = new_order
         self.updateList()
+
     def loadPlugins(self):
         plugins_dir = os.path.join(os.path.dirname(__file__), "plugins")
         if not os.path.isdir(plugins_dir):
@@ -297,18 +320,20 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"Error loading plugin {modulename}: {e}")
         sys.path.pop(0)
+
     def createMenuBar(self):
         menuBar = QMenuBar(self)
-
         fileMenu = QMenu("File", self)
         newAct = QAction("New Project", self)
         openAct = QAction("Open", self)
         saveAct = QAction("Save", self)
         saveAsAct = QAction("Save As", self)
+
         newAct.triggered.connect(self.newProject)
         openAct.triggered.connect(self.openProject)
         saveAct.triggered.connect(self.saveProject)
         saveAsAct.triggered.connect(self.saveProjectAs)
+
         fileMenu.addAction(newAct)
         fileMenu.addAction(openAct)
         fileMenu.addAction(saveAct)
@@ -320,6 +345,7 @@ class MainWindow(QMainWindow):
 
         genAllStillsAct = QAction("Generate All Stills", self)
         genAllVideosAct = QAction("Generate All Videos", self)
+
         genAllStillsAct.triggered.connect(self.onGenerateAllStills)
         genAllVideosAct.triggered.connect(self.onGenerateAllVideos)
         fileMenu.addAction(genAllStillsAct)
@@ -337,6 +363,7 @@ class MainWindow(QMainWindow):
         menuBar.addMenu(fileMenu)
         menuBar.addMenu(settingsMenu)
         self.setMenuBar(menuBar)
+
     def createToolBar(self):
         # Add toolbar
         toolbar = self.addToolBar("Main Toolbar")
@@ -353,9 +380,9 @@ class MainWindow(QMainWindow):
         renderAllStillsBtn.triggered.connect(self.onGenerateAllStills)
         renderAllVideosBtn.triggered.connect(self.onGenerateAllVideos)
         stopRenderingBtn.triggered.connect(self.stopRendering)
-
         self.startComfyBtn.triggered.connect(self.startComfy)
         self.stopComfyBtn.triggered.connect(self.stopComfy)
+
     def stopRendering(self):
         self.renderQueue.clear()
         self.statusMessage.setText("Render queue cleared.")
@@ -364,6 +391,7 @@ class MainWindow(QMainWindow):
         self.status = self.statusBar()
         self.statusMessage = QLabel("Ready")
         self.status.addPermanentWidget(self.statusMessage, 1)
+
     def startComfy(self):
         import subprocess
         py_path = self.settingsManager.get("comfy_py_path")
@@ -383,27 +411,21 @@ class MainWindow(QMainWindow):
         base_dir = os.path.join(os.path.dirname(__file__), "workflows")
         image_dir = os.path.join(base_dir, "image")
         video_dir = os.path.join(base_dir, "video")
-
         self.image_workflows = []
         self.video_workflows = []
-
         if os.path.isdir(image_dir):
             for fname in os.listdir(image_dir):
                 if fname.lower().endswith(".json"):
                     self.image_workflows.append(fname)
-
         if os.path.isdir(video_dir):
             for fname in os.listdir(video_dir):
                 if fname.lower().endswith(".json"):
                     self.video_workflows.append(fname)
-
         self.stillWorkflowCombo.clear()
         self.videoWorkflowCombo.clear()
-
         self.stillWorkflowCombo.addItem("Select workflow...", "")
         for wf in self.image_workflows:
             self.stillWorkflowCombo.addItem(wf, os.path.join(image_dir, wf))
-
         self.videoWorkflowCombo.addItem("Select workflow...", "")
         for wf in self.video_workflows:
             self.videoWorkflowCombo.addItem(wf, os.path.join(video_dir, wf))
@@ -421,10 +443,7 @@ class MainWindow(QMainWindow):
         self.clearDock()
 
     def addShot(self):
-        """
-        Create a new shot. If there is a current shot, inherit its parameter structure
-        (but clear out the actual paths and versions). Otherwise, use the default params.
-        """
+        """Create a new shot with default parameters from current workflows."""
         if self.shots and self.currentShotIndex is not None and self.currentShotIndex >= 0:
             reference_shot = self.shots[self.currentShotIndex]
             new_shot = copy.deepcopy(reference_shot)
@@ -436,7 +455,6 @@ class MainWindow(QMainWindow):
             new_shot["currentImageVersion"] = -1
             new_shot["currentVideoVersion"] = -1
         else:
-            # fallback to default
             new_shot = {
                 "name": f"Shot {len(self.shots) + 1}",
                 "shotParams": copy.deepcopy(self.defaultShotParams),
@@ -458,14 +476,12 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(self, "Select TXT File", "", "Text Files (*.txt)")
         if not filename:
             return
-
         # Step 2: Read lines from the file
         with open(filename, "r") as f:
             lines = [line.strip() for line in f if line.strip()]
         if not lines:
             QMessageBox.information(self, "Info", "No lines found in file.")
             return
-
         # Step 3: Gather available parameter fields from default parameter lists
         possible_fields = []
         param_mapping = {}
@@ -481,25 +497,18 @@ class MainWindow(QMainWindow):
             key = f"VideoParam: {param['name']}"
             possible_fields.append(key)
             param_mapping[key] = ('videoParams', param)
-
         if not possible_fields:
             QMessageBox.information(self, "Info", "No parameter fields available for import.")
             return
-
         # Step 4: Ask the user to select a field into which to import lines
-        field, ok = QInputDialog.getItem(self, "Select Field",
-                                         "Select a field to import lines into:",
-                                         possible_fields, 0, False)
+        field, ok = QInputDialog.getItem(self, "Select Field", "Select a field to import lines into:", possible_fields, 0, False)
         if not ok or not field:
             return
-
         array_name, default_param = param_mapping[field]
-
         # Step 5: Determine a reference shot for inheritance, if available
         reference_shot = None
         if self.shots and self.currentShotIndex is not None and self.currentShotIndex >= 0:
             reference_shot = self.shots[self.currentShotIndex]
-
         # For each line, create a new shot and override the chosen field
         for line in lines:
             # Create a new shot based on current reference or default
@@ -526,19 +535,17 @@ class MainWindow(QMainWindow):
                     "currentImageVersion": -1,
                     "currentVideoVersion": -1
                 }
-
             # Override the selected field with the line's content
             params_array = new_shot[array_name]
             for param in params_array:
                 if param["name"] == default_param["name"]:
                     param["value"] = line
                     break  # Assume field names are unique within this array
-
             self.shots.append(new_shot)
-
         # Step 6: Update the UI list of shots
         self.updateList()
         QMessageBox.information(self, "Import Completed", f"Imported {len(lines)} shots.")
+
     def openProject(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "JSON Files (*.json)")
         if path:
@@ -579,7 +586,6 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             self.listWidget.addItem(item)
-
         # "Add New Shot"
         addIcon = QIcon()
         addItem = QListWidgetItem(addIcon, "Add New Shot")
@@ -594,23 +600,19 @@ class MainWindow(QMainWindow):
         else:
             self.currentShotIndex = idx
             self.fillDock()
+
     def onListWidgetContextMenu(self, pos: QPoint):
-        """
-        Show a right-click context menu on the shots list for deleting or duplicating a shot.
-        """
+        """Show a right-click context menu on the shots list for deleting or duplicating a shot."""
         item = self.listWidget.itemAt(pos)
         if not item:
             return
         idx = item.data(Qt.ItemDataRole.UserRole)
         if idx < 0 or idx >= len(self.shots):
             return  # Ignore the 'Add new shot' item or out-of-bounds
-
         menu = QMenu(self)
         deleteAction = menu.addAction("Delete Shot")
         duplicateAction = menu.addAction("Duplicate Shot")
         extendAction = menu.addAction("Extend Clip")
-
-
         action = menu.exec(self.listWidget.mapToGlobal(pos))
         if action == deleteAction:
             # Confirm
@@ -636,71 +638,42 @@ class MainWindow(QMainWindow):
             new_shot["videoVersions"] = []
             new_shot["currentImageVersion"] = -1
             new_shot["currentVideoVersion"] = -1
-
             self.shots.append(new_shot)
             self.updateList()
         elif action == extendAction:
             self.extendClip(idx)
+
     def clearDock(self):
         for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
             while frm.rowCount() > 0:
                 frm.removeRow(0)
 
     def fillDock(self):
-        """
-        Fill the three shot tabs:
-        1) Shot Image Params (self.imageForm)
-        2) Shot Video Params (self.videoForm)
-        3) Shot Misc (self.currentShotForm) => includes only shotParams + extras in 'params'
-        """
+        """Fill the three shot tabs."""
         self.clearDock()
         if self.currentShotIndex is None or self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
             return
-
         shot = self.shots[self.currentShotIndex]
-
         # --- 1) Shot Image Params ---
-        for param in shot.get("imageParams", []):
+        for idx, param in enumerate(shot.get("imageParams", [])):
             ptype = param.get("type", "string")
-            if ptype == "image":
-                rowWidget = self.createImageParamWidget(param)
-            elif ptype == "video":
-                rowWidget = self.createVideoParamWidget(param)
-            else:
-                rowWidget = self.createBasicParamWidget(param)
+            rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True)
             self.imageForm.addRow(param["name"], rowWidget)
-
         # --- 2) Shot Video Params ---
-        for param in shot.get("videoParams", []):
+        for idx, param in enumerate(shot.get("videoParams", [])):
             ptype = param.get("type", "string")
-            if ptype == "image":
-                rowWidget = self.createImageParamWidget(param)
-            elif ptype == "video":
-                rowWidget = self.createVideoParamWidget(param)
-            else:
-                rowWidget = self.createBasicParamWidget(param)
+            rowWidget = self.createParamWidgetWithRemove(param, isVideo=True, isShotLevel=True)
             self.videoForm.addRow(param["name"], rowWidget)
-
         # --- 3) Shot Misc => shotParams + shot["params"] ---
-        # Only fill non-'image' and non-'video' from shotParams, because 'image' / 'video'
-        # are already handled above. The same logic for param in shot["params"].
-        for param in shot.get("shotParams", []):
+        for idx, param in enumerate(shot["shotParams"]):
             ptype = param.get("type", "string")
-            if ptype in ("image", "video"):
-                # Skip here since we already place them in the relevant tab
-                continue
-            rowWidget = self.createBasicParamWidget(param)
+            rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True, misc=True)
             self.currentShotForm.addRow(param["name"], rowWidget)
-
-        for param in shot["params"]:
+        for idx, param in enumerate(shot["params"]):
             ptype = param.get("type", "string")
             pname = param.get("name", "Unknown")
-            if ptype in ("image", "video"):
-                # Skip here, or handle similarly if you want them in the Misc tab
-                continue
-            rowWidget = self.createBasicParamWidget(param)
+            rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True, misc=True)
             self.currentShotForm.addRow(pname, rowWidget)
-
         # Versions & video preview
         if shot["imageVersions"]:
             label = QLabel("Image Version:")
@@ -723,7 +696,6 @@ class MainWindow(QMainWindow):
                 lambda idx, s=shot, c=combo: self.onVideoVersionChanged(s, c, idx)
             )
             self.currentShotForm.addRow(label, combo)
-
         videoPath = shot.get("videoPath", "")
         if videoPath and os.path.exists(videoPath):
             self.player.setSource(QUrl.fromLocalFile(videoPath))
@@ -738,34 +710,26 @@ class MainWindow(QMainWindow):
         if shot.get("stillPath") and os.path.exists(shot["stillPath"]):
             base_pix = QPixmap(shot["stillPath"])
             if not base_pix.isNull():
-                base_pix = base_pix.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio,
-                                           Qt.TransformationMode.SmoothTransformation)
+                base_pix = base_pix.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             else:
                 base_pix = self.makeFallbackPixmap()
         else:
             base_pix = self.makeFallbackPixmap()
-
         final_pix = QPixmap(120, 90)
         final_pix.fill(Qt.GlobalColor.transparent)
-
         from qtpy.QtGui import QPainter, QBrush, QPen
         painter = QPainter(final_pix)
         painter.drawPixmap(0, 0, base_pix)
-
         img_status_color = self.getShotImageStatusColor(shot)
         vid_status_color = self.getShotVideoStatusColor(shot)
-
         circle_radius = 8
-
         painter.setBrush(QBrush(img_status_color))
         painter.setPen(QPen(Qt.GlobalColor.black, 1))
         painter.drawEllipse(2, 2, circle_radius, circle_radius)
-
         painter.setBrush(QBrush(vid_status_color))
         painter.setPen(QPen(Qt.GlobalColor.black, 1))
         painter.drawEllipse(final_pix.width() - circle_radius - 2, 2, circle_radius, circle_radius)
         painter.end()
-
         return QIcon(final_pix)
 
     def makeFallbackPixmap(self):
@@ -819,14 +783,12 @@ class MainWindow(QMainWindow):
             return self.createBasicParamWidget(param)
         container = QWidget()
         col = QVBoxLayout(container)
-
         row1 = QHBoxLayout()
         pathEdit = QLineEdit(param["value"])
         selectBtn = QPushButton("Select")
         preview = QLabel()
         preview.setFixedSize(60, 45)
         preview.setStyleSheet("border: 1px solid gray;")
-
         if param["value"] and os.path.exists(param["value"]):
             pix = QPixmap(param["value"])
             if not pix.isNull():
@@ -848,7 +810,6 @@ class MainWindow(QMainWindow):
 
         pathEdit.textChanged.connect(lambda val, p=param: self.onParamChanged(p, val))
         selectBtn.clicked.connect(onSelect)
-
         row1.addWidget(pathEdit)
         row1.addWidget(selectBtn)
         row1.addWidget(preview)
@@ -859,16 +820,13 @@ class MainWindow(QMainWindow):
 
         def onUseShotToggled(state):
             param["useShotImage"] = bool(state)
-
         useShotCheck.stateChanged.connect(onUseShotToggled)
         row2.addWidget(useShotCheck)
-
         col.addLayout(row1)
         col.addLayout(row2)
         return container
 
     def createVideoParamWidget(self, param):
-
         if param.get("type", "string") != "video":
             # Fallback to basic widget if it's not really an image param
             return self.createBasicParamWidget(param)
@@ -876,7 +834,6 @@ class MainWindow(QMainWindow):
         hbox = QHBoxLayout(container)
         pathEdit = QLineEdit(param["value"])
         selectBtn = QPushButton("Select")
-
         preview = QLabel("No Video")
         if param["value"] and os.path.exists(param["value"]):
             preview.setText("Video Loaded")
@@ -891,7 +848,6 @@ class MainWindow(QMainWindow):
 
         pathEdit.textChanged.connect(lambda val, p=param: self.onParamChanged(p, val))
         selectBtn.clicked.connect(onSelect)
-
         hbox.addWidget(pathEdit)
         hbox.addWidget(selectBtn)
         hbox.addWidget(preview)
@@ -899,6 +855,7 @@ class MainWindow(QMainWindow):
 
     def onParamChanged(self, paramDict, newVal):
         paramDict["value"] = newVal
+        self.saveCurrentWorkflowParams(isVideo=False)
 
     def onImageVersionChanged(self, shot, combo, idx):
         shot["currentImageVersion"] = idx
@@ -930,119 +887,42 @@ class MainWindow(QMainWindow):
     def createGlobalParamWidget(self, param, isVideo=False):
         container = QWidget()
         layout = QHBoxLayout(container)
-
         ptype = param["type"]
         pval = param["value"]
-
         if ptype == "int":
             w = QSpinBox()
             w.setRange(0, 2147483647)
             w.setValue(min(pval, 2147483647))
-            w.valueChanged.connect(lambda v, p=param: self.onGlobalParamChanged(p, v))
+            w.valueChanged.connect(lambda v, p=param: self.onGlobalParamChanged(p, v, isVideo))
         elif ptype == "float":
             w = QDoubleSpinBox()
             w.setRange(0.0, 2147483647.0)
             w.setDecimals(3)
             w.setValue(pval)
-            w.valueChanged.connect(lambda v, p=param: self.onGlobalParamChanged(p, v))
+            w.valueChanged.connect(lambda v, p=param: self.onGlobalParamChanged(p, v, isVideo))
         else:
             w = QLineEdit(str(pval))
-            w.textChanged.connect(lambda val, p=param: self.onGlobalParamChanged(p, val))
-
+            w.textChanged.connect(lambda val, p=param: self.onGlobalParamChanged(p, val, isVideo))
         removeBtn = QPushButton("Remove")
         removeBtn.clicked.connect(lambda _, p=param, vid=isVideo: self.removeGlobalParam(p, vid))
-
         layout.addWidget(w)
         layout.addWidget(removeBtn)
         return container
 
-    def onGlobalParamChanged(self, param, newVal):
-        param["value"] = newVal
-
-    def addShotParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
-        """
-        When a new shot-level parameter is exposed, also store it in the default arrays
-        so that newly created shots will inherit it in the future.
-        """
-        # Always add to default arrays, regardless of currentShotIndex:
-        if isVideo:
-            self.defaultVideoParams.append({
-                "type": paramType,
-                "name": paramName,
-                "value": paramValue,
-                "nodeIDs": [str(nodeID)]
-            })
-            self.settingsManager.set("default_video_params", self.defaultVideoParams)
+    def createParamWidgetWithRemove(self, param, isVideo, isShotLevel, misc=False):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        if param.get("type", "string") == "image":
+            w = self.createImageParamWidget(param)
+        elif param.get("type", "string") == "video":
+            w = self.createVideoParamWidget(param)
         else:
-            self.defaultImageParams.append({
-                "type": paramType,
-                "name": paramName,
-                "value": paramValue,
-                "nodeIDs": [str(nodeID)]
-            })
-            self.settingsManager.set("default_image_params", self.defaultImageParams)
-
-        self.settingsManager.save()
-
-        # If no active shot, we're done. The param is stored in defaults for future shots.
-        if self.currentShotIndex is None or self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
-            QMessageBox.information(
-                self, "Info",
-                f"No active shot. Param '{paramName}' saved to {'video' if isVideo else 'image'} defaults."
-            )
-            return
-
-        # Otherwise, attach to the current shot
-        shot = self.shots[self.currentShotIndex]
-        new_param = {
-            "type": paramType,
-            "name": paramName,
-            "value": paramValue,
-            "nodeIDs": [str(nodeID)]
-        }
-        if isVideo:
-            shot["videoParams"].append(new_param)
-        else:
-            shot["imageParams"].append(new_param)
-
-        QMessageBox.information(
-            self,
-            "Param Exposed",
-            f"Param '{paramName}' (type '{paramType}') added to {'video' if isVideo else 'image'} params "
-            f"and stored in defaults."
-        )
-        self.fillDock()
-
-    def addGlobalParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
-        """
-        Creates a new param dictionary and appends it to either globalVideoParams or
-        globalImageParams, based solely on isVideo (not overriding the paramType).
-        Then refresh the global forms.
-        """
-        new_param = {
-            "type": paramType,
-            "name": paramName,
-            "value": paramValue,
-            "nodeIDs": [str(nodeID)],
-            "useShotImage": False
-        }
-
-        if isVideo:
-            self.globalVideoParams.append(new_param)
-            self.refreshGlobalVideoParams()
-            QMessageBox.information(
-                self,
-                "Global Param Added",
-                f"Param '{paramName}' (type '{paramType}') added to Global Video Params."
-            )
-        else:
-            self.globalImageParams.append(new_param)
-            self.refreshGlobalImageParams()
-            QMessageBox.information(
-                self,
-                "Global Param Added",
-                f"Param '{paramName}' (type '{paramType}') added to Global Image Params."
-            )
+            w = self.createBasicParamWidget(param)
+        removeBtn = QPushButton("Remove")
+        removeBtn.clicked.connect(lambda _, p=param, isShotLevel=isShotLevel, misc=misc, isVideo=isVideo: self.removeShotParam(p, isShotLevel, isVideo, misc))
+        layout.addWidget(w)
+        layout.addWidget(removeBtn)
+        return container
 
     def removeGlobalParam(self, param, isVideo):
         if isVideo:
@@ -1051,6 +931,156 @@ class MainWindow(QMainWindow):
         else:
             self.globalImageParams.remove(param)
             self.refreshGlobalImageParams()
+        self.saveCurrentWorkflowParams(isVideo)
+
+    def removeShotParam(self, param, isShotLevel, isVideo, misc):
+        if self.currentShotIndex is None or self.currentShotIndex < 0:
+            return
+        shot = self.shots[self.currentShotIndex]
+        if isShotLevel:
+            if misc:
+                if param in shot["shotParams"]:
+                    shot["shotParams"].remove(param)
+                elif param in shot["params"]:
+                    shot["params"].remove(param)
+            else:
+                if isVideo:
+                    shot["videoParams"].remove(param)
+                else:
+                    shot["imageParams"].remove(param)
+        self.fillDock()
+
+    def addGlobalParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
+        """Creates a new param dictionary and appends it to either globalVideoParams or globalImageParams."""
+        new_param = {
+            "type": paramType,
+            "name": paramName,
+            "value": paramValue,
+            "nodeIDs": [str(nodeID)],
+            "useShotImage": False
+        }
+        if isVideo:
+            self.globalVideoParams.append(new_param)
+            self.refreshGlobalVideoParams()
+            QMessageBox.information(
+                self,
+                "Global Param Added",
+                f"Param '{paramName}' (type '{paramType}') added to Global Video Params."
+            )
+            self.saveCurrentWorkflowParams(isVideo=True)
+        else:
+            self.globalImageParams.append(new_param)
+            self.refreshGlobalImageParams()
+            QMessageBox.information(
+                self,
+                "Global Param Added",
+                f"Param '{paramName}' (type '{paramType}') added to Global Image Params."
+            )
+            self.saveCurrentWorkflowParams(isVideo=False)
+
+    def onGlobalParamChanged(self, param, newVal, isVideo):
+        param["value"] = newVal
+        self.saveCurrentWorkflowParams(isVideo)
+
+    def addShotParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
+        """Add shot parameter and store it in defaults."""
+        new_param = {
+            "type": paramType,
+            "name": paramName,
+            "value": paramValue,
+            "nodeIDs": [str(nodeID)]
+        }
+        if isVideo:
+            self.defaultVideoParams.append(new_param)
+            self.saveCurrentWorkflowParams(isVideo=True)
+        else:
+            self.defaultImageParams.append(new_param)
+            self.saveCurrentWorkflowParams(isVideo=False)
+        if self.currentShotIndex is None or self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
+            QMessageBox.information(
+                self,
+                "Info",
+                f"No active shot. Param '{paramName}' saved to {'video' if isVideo else 'image'} defaults."
+            )
+            return
+        shot = self.shots[self.currentShotIndex]
+        if isVideo:
+            shot["videoParams"].append(new_param)
+        else:
+            shot["imageParams"].append(new_param)
+        QMessageBox.information(
+            self,
+            "Param Exposed",
+            f"Param '{paramName}' (type '{paramType}') added to {'video' if isVideo else 'image'} params "
+            f"and stored in defaults."
+        )
+        self.fillDock()
+
+    def onStillWorkflowChanged(self, index):
+        workflow_path = self.stillWorkflowCombo.currentData()
+        if not workflow_path:
+            return
+        self.current_image_workflow = workflow_path
+        self.loadWorkflowParams(workflow_path, isVideo=False)
+
+    def onVideoWorkflowChanged(self, index):
+        workflow_path = self.videoWorkflowCombo.currentData()
+        if not workflow_path:
+            return
+        self.current_video_workflow = workflow_path
+        self.loadWorkflowParams(workflow_path, isVideo=True)
+
+    def loadWorkflowParams(self, workflow_path, isVideo):
+        workflow_params = self.settingsManager.get("workflow_params", {})
+        workflow_data = workflow_params.get(workflow_path, {})
+        if isVideo:
+            self.globalVideoParams = copy.deepcopy(workflow_data.get("global_video_params", []))
+            self.defaultVideoParams = copy.deepcopy(workflow_data.get("default_video_params", []))
+            if not self.defaultVideoParams:
+                self.defaultVideoParams = [
+                    {
+                        "type": "image",
+                        "name": "Image",
+                        "value": "",
+                        "useShotImage": True,
+                        "nodeIDs": ["1"]
+                    },
+                ]
+            self.refreshGlobalVideoParams()
+            self.updateShotsParams(isVideo=True)
+        else:
+            self.globalImageParams = copy.deepcopy(workflow_data.get("global_image_params", []))
+            self.defaultImageParams = copy.deepcopy(workflow_data.get("default_image_params", []))
+            self.refreshGlobalImageParams()
+            self.updateShotsParams(isVideo=False)
+
+    def updateShotsParams(self, isVideo):
+        for shot in self.shots:
+            if isVideo:
+                shot["videoParams"] = copy.deepcopy(self.defaultVideoParams)
+            else:
+                shot["imageParams"] = copy.deepcopy(self.defaultImageParams)
+        self.updateList()
+        self.fillDock()
+
+    def saveCurrentWorkflowParams(self, isVideo):
+        if isVideo:
+            workflow_path = self.current_video_workflow
+        else:
+            workflow_path = self.current_image_workflow
+        if not workflow_path:
+            return
+        workflow_params = self.settingsManager.get("workflow_params", {})
+        workflow_data = workflow_params.get(workflow_path, {})
+        if isVideo:
+            workflow_data["global_video_params"] = self.globalVideoParams
+            workflow_data["default_video_params"] = self.defaultVideoParams
+        else:
+            workflow_data["global_image_params"] = self.globalImageParams
+            workflow_data["default_image_params"] = self.defaultImageParams
+        workflow_params[workflow_path] = workflow_data
+        self.settingsManager.set("workflow_params", workflow_params)
+        self.settingsManager.save()
 
     def onRenderStill(self):
         if self.currentShotIndex is None or self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
@@ -1073,25 +1103,18 @@ class MainWindow(QMainWindow):
         self.renderWithWorkflow(workflow_path, shot, isVideo=True)
 
     def onGenerateAllStills(self):
-        """
-        Clear the render queue, then enqueue any shots whose signature has changed
-        or which lack a valid stillPath. Start the queue.
-        """
+        """Clear the render queue and enqueue shots for rendering."""
         self.renderQueue.clear()
         for i, shot in enumerate(self.shots):
             new_signature = self.computeRenderSignature(shot, isVideo=False)
             last_sig = shot.get("lastStillSignature", "")
             still_path = shot.get("stillPath", "")
-            # Only re-render if there's no existing still or signature changed
             if not still_path or (new_signature != last_sig):
                 self.queueShotRender(i, isVideo=False)
         self.startNextRender()
 
     def onGenerateAllVideos(self):
-        """
-        Clear the render queue, then enqueue any shots whose signature has changed
-        or which lack a valid videoPath. Start the queue.
-        """
+        """Clear the render queue and enqueue shots for rendering."""
         self.renderQueue.clear()
         for i, shot in enumerate(self.shots):
             new_signature = self.computeRenderSignature(shot, isVideo=True)
@@ -1100,6 +1123,7 @@ class MainWindow(QMainWindow):
             if not video_path or (new_signature != last_sig):
                 self.queueShotRender(i, isVideo=True)
         self.startNextRender()
+
     def extendClip(self, shotIndex):
         import cv2, copy
         shot = self.shots[shotIndex]
@@ -1107,12 +1131,10 @@ class MainWindow(QMainWindow):
         if not video_path or not os.path.exists(video_path):
             QMessageBox.information(self, "Info", "No video found for this shot.")
             return
-
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             QMessageBox.warning(self, "Error", "Cannot open video file.")
             return
-
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count - 1)
         ret, frame = cap.read()
@@ -1120,12 +1142,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Failed to read last frame.")
             cap.release()
             return
-
         temp_dir = tempfile.gettempdir()
         frame_filename = os.path.join(temp_dir, f"extracted_frame_{random.randint(0,999999)}.png")
         cv2.imwrite(frame_filename, frame)
         cap.release()
-
         new_shot = copy.deepcopy(shot)
         new_shot["name"] = f"{shot['name']} Extended"
         new_shot["videoPath"] = ""
@@ -1135,19 +1155,12 @@ class MainWindow(QMainWindow):
         new_shot.setdefault("imageVersions", []).append(frame_filename)
         new_shot["currentImageVersion"] = len(new_shot["imageVersions"]) - 1
         new_shot["lastStillSignature"] = self.computeRenderSignature(new_shot, isVideo=False)
-
         self.shots.insert(shotIndex + 1, new_shot)
         self.updateList()
-    def computeRenderSignature(self, shot, isVideo=False):
-        """
-        Incorporates shotParams, plus imageParams or videoParams accordingly,
-        plus shot['params'] that are relevant to image or video,
-        plus the relevant global params. Also includes the actual shot’s
-        rendered stillPath if 'useShotImage' is True on an image param,
-        so that changing the shot's upstream image can invalidate the signature.
-        """
-        import hashlib
 
+    def computeRenderSignature(self, shot, isVideo=False):
+        """Compute signature for render parameters."""
+        import hashlib
         relevantShotParams = []
         # shotParams => "misc"
         for p in shot.get("shotParams", []):
@@ -1158,7 +1171,6 @@ class MainWindow(QMainWindow):
                 "nodeIDs": p.get("nodeIDs", []),
                 "value": p["value"]
             })
-
         # include either imageParams or videoParams
         if not isVideo:
             for p in shot.get("imageParams", []):
@@ -1186,7 +1198,6 @@ class MainWindow(QMainWindow):
                     "nodeIDs": p.get("nodeIDs", []),
                     "value": param_value
                 })
-
         # shot["params"], respecting usage
         for p in shot["params"]:
             usage = p.get("usage", "both").lower()
@@ -1203,13 +1214,11 @@ class MainWindow(QMainWindow):
                         shot.get("stillPath", "") if p.get("useShotImage") else p.get("value", "")
                     )
                 })
-
         # global
         relevantGlobalParams = []
         if isVideo:
             for gp in self.globalVideoParams:
                 param_value = gp["value"]
-                # If for some reason you want to also incorporate shot's stillPath if gp says useShotImage...
                 if gp.get("useShotImage"):
                     param_value = shot.get("stillPath", "")
                 relevantGlobalParams.append({
@@ -1231,7 +1240,6 @@ class MainWindow(QMainWindow):
                     "nodeIDs": gp.get("nodeIDs", []),
                     "value": param_value
                 })
-
         data_struct = {
             "shotParams": sorted(relevantShotParams, key=lambda x: x["name"]),
             "globalParams": sorted(relevantGlobalParams, key=lambda x: x["name"])
@@ -1247,12 +1255,10 @@ class MainWindow(QMainWindow):
             return
         if not self.renderQueue:
             return
-
         shotIndex, isVideo = self.renderQueue.pop(0)
         if shotIndex < 0 or shotIndex >= len(self.shots):
             return
         shot = self.shots[shotIndex]
-
         if isVideo:
             wf_path = self.videoWorkflowCombo.currentData()
             if not wf_path:
@@ -1273,7 +1279,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
             return
-
         local_params = []
         local_params.extend(shot["shotParams"])
         if not isVideo:
@@ -1281,19 +1286,14 @@ class MainWindow(QMainWindow):
         else:
             local_params.extend(shot["videoParams"])
         local_params.extend(shot["params"])
-
         global_params = self.globalVideoParams if isVideo else self.globalImageParams
         debug_info = []
-
         targetShotIndex = shotIndex if queueMode and shotIndex is not None else self.currentShotIndex
         the_shot = self.shots[targetShotIndex]
-
         self.statusMessage.setText(f"Rendering {shot.get('name', 'Unnamed')} - {'Video' if isVideo else 'Image'} ...")
-
         for node_id, node_data in workflow_json.items():
             inputs_dict = node_data.get("inputs", {})
             meta_title = node_data.get("_meta", {}).get("title", "").lower()
-
             # Local shot-level
             for input_key in list(inputs_dict.keys()):
                 ikey_lower = str(input_key).lower()
@@ -1302,10 +1302,8 @@ class MainWindow(QMainWindow):
                     pType = param["type"]
                     pValue = param["value"]
                     nodeIDs = param.get("nodeIDs", [])
-
                     if nodeIDs and str(node_id) not in nodeIDs:
                         continue
-
                     if pNameLower == ikey_lower:
                         if pType == "image" and param.get("useShotImage"):
                             val_to_set = the_shot.get("stillPath") or pValue
@@ -1318,7 +1316,6 @@ class MainWindow(QMainWindow):
                             debug_info.append(
                                 f"[SHOT] Node {node_id} input '{input_key}' -> '{pValue}'"
                             )
-
                 if "positive prompt" in meta_title and input_key == "text":
                     for param in local_params:
                         if param["name"].lower() == "positive prompt":
@@ -1329,7 +1326,6 @@ class MainWindow(QMainWindow):
                             debug_info.append(
                                 f"[SHOT] Node {node_id} 'text' overridden by Positive Prompt = '{param['value']}'"
                             )
-
             # Global
             for input_key in list(inputs_dict.keys()):
                 ikey_lower = str(input_key).lower()
@@ -1344,29 +1340,25 @@ class MainWindow(QMainWindow):
                         debug_info.append(
                             f"[GLOBAL] Node {node_id} input '{input_key}' -> '{pValue}'"
                         )
-
         print("=== Debug Param Setting ===")
         for line in debug_info:
             print(line)
-
         comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188").rstrip("/")
         url = f"{comfy_ip}/prompt"
         headers = {"Content-Type": "application/json"}
         data = {"prompt": workflow_json}
-
         try:
             resp = requests.post(url, headers=headers, json=data)
             resp.raise_for_status()
             result = resp.json()
             self.last_prompt_id = result.get("prompt_id")
-
             if self.last_prompt_id:
                 self.activePrompts[self.last_prompt_id] = (targetShotIndex, isVideo)
                 self.result_timer.start()
             else:
                 QMessageBox.information(self, "Info", "No prompt_id returned from ComfyUI.")
-                if queueMode:
-                    self.startNextRender()
+            if queueMode:
+                self.startNextRender()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Request to ComfyUI failed: {e}")
             if queueMode:
@@ -1393,7 +1385,6 @@ class MainWindow(QMainWindow):
         if self.last_prompt_id not in self.activePrompts:
             return
         shotIndex, isVideo = self.activePrompts[self.last_prompt_id]
-
         prompt_result = result_data.get(self.last_prompt_id, {})
         outputs = prompt_result.get("outputs", {})
         if not outputs:
@@ -1401,10 +1392,8 @@ class MainWindow(QMainWindow):
             self.last_prompt_id = None
             self.startNextRender()
             return
-
         final_path = None
         final_is_video = False
-
         for node_id, output_data in outputs.items():
             images = output_data.get("images", [])
             for image_info in images:
@@ -1415,7 +1404,6 @@ class MainWindow(QMainWindow):
                     break
             if final_path:
                 break
-
             gifs = output_data.get("gifs", [])
             for gif_info in gifs:
                 filename = gif_info.get("filename")
@@ -1426,7 +1414,6 @@ class MainWindow(QMainWindow):
                     break
             if final_path:
                 break
-
         if final_path:
             project_folder = None
             if self.currentFilePath:
@@ -1436,11 +1423,10 @@ class MainWindow(QMainWindow):
                 dlg.setFileMode(QFileDialog.FileMode.Directory)
                 if dlg.exec() == QDialog.DialogCode.Accepted:
                     project_folder = dlg.selectedFiles()[0]
-                    if not self.currentFilePath:
-                        self.currentFilePath = os.path.join(project_folder, "untitled.json")
-                else:
-                    project_folder = tempfile.gettempdir()
-
+            if not self.currentFilePath:
+                self.currentFilePath = os.path.join(project_folder, "untitled.json")
+            else:
+                project_folder = tempfile.gettempdir()
             local_path = self.downloadComfyFile(final_path)
             if local_path:
                 ext = os.path.splitext(local_path)[1]
@@ -1451,7 +1437,6 @@ class MainWindow(QMainWindow):
                         dst.write(src.read())
                 except Exception as e:
                     new_full = local_path
-
                 shot = self.shots[shotIndex]
                 if final_is_video or isVideo:
                     shot["videoPath"] = new_full
@@ -1463,9 +1448,7 @@ class MainWindow(QMainWindow):
                     shot["imageVersions"].append(new_full)
                     shot["currentImageVersion"] = len(shot["imageVersions"]) - 1
                     shot["lastStillSignature"] = self.computeRenderSignature(shot, isVideo=False)
-
                 self.updateList()
-
         del self.activePrompts[self.last_prompt_id]
         self.last_prompt_id = None
         self.statusMessage.setText("Ready")
@@ -1512,29 +1495,14 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.saveProject()
-                self.settingsManager.set("global_image_params", self.globalImageParams)
-                self.settingsManager.set("global_video_params", self.globalVideoParams)
-                self.settingsManager.set("default_shot_params", self.defaultShotParams)
-                self.settingsManager.set("default_image_params", self.defaultImageParams)
-                self.settingsManager.set("default_video_params", self.defaultVideoParams)
                 self.settingsManager.save()
                 event.accept()
             elif reply == QMessageBox.StandardButton.No:
-                self.settingsManager.set("global_image_params", self.globalImageParams)
-                self.settingsManager.set("global_video_params", self.globalVideoParams)
-                self.settingsManager.set("default_shot_params", self.defaultShotParams)
-                self.settingsManager.set("default_image_params", self.defaultImageParams)
-                self.settingsManager.set("default_video_params", self.defaultVideoParams)
                 self.settingsManager.save()
                 event.accept()
             else:
                 event.ignore()
         else:
-            self.settingsManager.set("global_image_params", self.globalImageParams)
-            self.settingsManager.set("global_video_params", self.globalVideoParams)
-            self.settingsManager.set("default_shot_params", self.defaultShotParams)
-            self.settingsManager.set("default_image_params", self.defaultImageParams)
-            self.settingsManager.set("default_video_params", self.defaultVideoParams)
             self.settingsManager.save()
             event.accept()
 

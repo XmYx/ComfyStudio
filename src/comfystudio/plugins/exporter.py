@@ -8,7 +8,6 @@ from qtpy.QtWidgets import (
     QAction, QDialog, QFormLayout, QLineEdit, QComboBox, QCheckBox, QHBoxLayout,
     QVBoxLayout, QDialogButtonBox, QLabel, QFileDialog, QMessageBox, QPushButton
 )
-from qtpy.QtCore import QThread, Signal
 
 def register(app):
     exporterAction = QAction("Export Project", app)

@@ -6,7 +6,6 @@ from qtpy.QtWidgets import (
     QPushButton, QLineEdit, QFileDialog, QMessageBox, QScrollArea,
     QWidget, QTabWidget, QListWidget, QListWidgetItem
 )
-from qtpy.QtCore import Qt
 
 class WorkflowEditor(QDialog):
     """
