@@ -1,0 +1,287 @@
+{
+  "1": {
+    "inputs": {
+      "image": "CogVideoX5B_00409.png",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "The video captures a series of frames showing ugly scenes, static with no motion, motion blur, over-saturation, shaky footage, low resolution, grainy texture, pixelated images, poorly lit areas, underexposed and overexposed scenes, poor color balance, washed out colors, choppy sequences, jerky movements, low frame rate, artifacting, color banding, unnatural transitions, outdated special effects, fake elements, unconvincing visuals, poorly edited content, jump cuts, visual noise, and flickering. Overall, the video is of poor quality.",
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": [
+        "13",
+        0
+      ],
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "string": [
+        "11",
+        2
+      ],
+      "old": "image",
+      "new": "video"
+    },
+    "class_type": "String Replace (mtb)",
+    "_meta": {
+      "title": "String Replace (mtb)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "string": [
+        "6",
+        0
+      ],
+      "old": "photo",
+      "new": "video"
+    },
+    "class_type": "String Replace (mtb)",
+    "_meta": {
+      "title": "String Replace (mtb)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "string": [
+        "7",
+        0
+      ],
+      "old": "painting",
+      "new": "video"
+    },
+    "class_type": "String Replace (mtb)",
+    "_meta": {
+      "title": "String Replace (mtb)"
+    }
+  },
+  "9": {
+    "inputs": {
+      "string": [
+        "8",
+        0
+      ],
+      "old": "illustration",
+      "new": "video"
+    },
+    "class_type": "String Replace (mtb)",
+    "_meta": {
+      "title": "String Replace (mtb)"
+    }
+  },
+  "11": {
+    "inputs": {
+      "text_input": "",
+      "task": "more_detailed_caption",
+      "fill_mask": true,
+      "keep_model_loaded": false,
+      "max_new_tokens": 256,
+      "num_beams": 3,
+      "do_sample": true,
+      "output_mask_select": "",
+      "seed": 434764705743373,
+      "image": [
+        "1",
+        0
+      ],
+      "florence2_model": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "Florence2Run",
+    "_meta": {
+      "title": "Florence2Run"
+    }
+  },
+  "12": {
+    "inputs": {
+      "model": "microsoft/Florence-2-base",
+      "precision": "fp16",
+      "attention": "sdpa"
+    },
+    "class_type": "DownloadAndLoadFlorence2Model",
+    "_meta": {
+      "title": "DownloadAndLoadFlorence2Model"
+    }
+  },
+  "13": {
+    "inputs": {
+      "action": "append",
+      "tidy_tags": "no",
+      "text_a": [
+        "9",
+        0
+      ],
+      "text_b": "",
+      "text_c": "The scene is captured in real-life footage."
+    },
+    "class_type": "StringFunction|pysssss",
+    "_meta": {
+      "title": "String Function 🐍"
+    }
+  },
+  "14": {
+    "inputs": {
+      "is_patcher": true,
+      "object_to_patch": "diffusion_model",
+      "compiler": "torch.compile",
+      "fullgraph": false,
+      "dynamic": true,
+      "mode": "",
+      "options": "",
+      "disable": false,
+      "backend": "inductor",
+      "model": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "EnhancedCompileModel",
+    "_meta": {
+      "title": "Compile Model+"
+    }
+  },
+  "18": {
+    "inputs": {
+      "unet_name": "Cosmos-1_0-Diffusion-7B-Video2World.safetensors",
+      "weight_dtype": "fp8_e4m3fn_fast"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "19": {
+    "inputs": {
+      "clip_name": "oldt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "cosmos",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "20": {
+    "inputs": {
+      "vae_name": "cosmos_cv8x8x8_1.0.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "22": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "Cosmos/videos/cosmos_i2v",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "23": {
+    "inputs": {
+      "seed": 1105077676468470,
+      "steps": 20,
+      "cfg": 6.5,
+      "sampler_name": "res_multistep",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "14",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "24": {
+    "inputs": {
+      "width": 960,
+      "height": 704,
+      "length": 121,
+      "batch_size": 1,
+      "vae": [
+        "20",
+        0
+      ],
+      "start_image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "CosmosImageToVideoLatent",
+    "_meta": {
+      "title": "CosmosImageToVideoLatent"
+    }
+  },
+  "25": {
+    "inputs": {
+      "samples": [
+        "23",
+        0
+      ],
+      "vae": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  }
+}
