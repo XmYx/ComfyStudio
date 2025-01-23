@@ -24,11 +24,10 @@ def openExportDialog(app):
     dialog = ExportShotsDialog(app)
     if dialog.exec() == QDialog.Accepted:
         config = dialog.getConfig()
-        performExport(app, config)
+        performExport(app, config, copy.deepcopy(app.shots))
 
-def performExport(app, config):
-    shots = copy.deepcopy(app.shots)
-
+def performExport(app, config, shots):
+    # shots = copy.deepcopy(app.shots)
     # Gather list of final video files from each shot
     # according to user "single" or "individual" preference
     final_paths = []

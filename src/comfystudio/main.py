@@ -1049,7 +1049,11 @@ class MainWindow(QMainWindow, ShotManager):
         deleteAction = menu.addAction("Delete Shot(s)")
         duplicateAction = menu.addAction("Duplicate Shot(s)")
         extendAction = menu.addAction("Extend Clip(s)")
+        if len(selected_items) > 1:
+            mergeAction = menu.addAction("Merge Clips")
+            mergeAction.triggered.connect(self.mergeClips)
         action = menu.exec(self.listWidget.mapToGlobal(pos))
+
 
         if action == deleteAction:
             # Confirm deletion
@@ -1086,6 +1090,77 @@ class MainWindow(QMainWindow, ShotManager):
             # Extend clips
             for idx in sorted(valid_indices):
                 self.extendClip(idx)
+
+    def mergeClips(self):
+        selected_items = self.listWidget.selectedItems()
+        if len(selected_items) < 2:
+            QMessageBox.warning(self, "Warning", "Select at least two clips to merge.")
+            return
+
+        # Collect video paths of selected shots
+        video_paths = []
+        for item in selected_items:
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            shot = self.shots[idx]
+            video_path = shot.get("videoPath")
+            if not video_path:
+                QMessageBox.warning(self, "Warning", f"Shot at index {idx} has no video path.")
+                return
+            video_paths.append(video_path)
+
+        # Create a temporary file list for ffmpeg
+        temp_file_list = tempfile.mktemp(suffix='.txt')
+        with open(temp_file_list, 'w') as f:
+            for path in video_paths:
+                f.write(f"file '{path}'\n")
+
+        # Determine project directory
+        if self.currentFilePath:
+            project_folder = os.path.dirname(self.currentFilePath)
+        else:
+            QMessageBox.warning(self, "Warning",
+                                "No project file is currently open. Merged video will be saved to the temporary directory.")
+            project_folder = tempfile.gettempdir()
+
+        # Ensure unique filename
+        merged_filename = f"merged_video_{random.randint(100000, 999999)}.mp4"
+        output_path = os.path.join(project_folder, merged_filename)
+
+        # Run ffmpeg to merge videos
+        command = [
+            'ffmpeg',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', temp_file_list,
+            '-c', 'copy',
+            output_path
+        ]
+        import subprocess
+        subprocess.run(command, check=True)
+
+        idx = selected_items[-1].data(Qt.ItemDataRole.UserRole) + 1  # After the last selected shot
+
+        new_shot = copy.deepcopy(self.shots[idx])
+        new_shot["name"] = f"{new_shot['name']} Merged"
+        new_shot["videoPath"] = output_path
+        new_shot["videoVersions"] = []
+        new_shot["currentVideoVersion"] = -1
+        new_shot.setdefault("videoVersions", []).append(output_path)
+        new_shot["currentVideoVersion"] = len(new_shot["videoVersions"]) - 1
+        new_shot["lastVideoSignature"] = self.computeRenderSignature(new_shot, isVideo=True)
+
+        # Insert the new shot into the shots list
+        self.shots.insert(idx, new_shot)
+        self.updateList()
+
+        # Optionally, select the new shot
+        new_item = self.listWidget.item(idx)
+        if new_item:
+            new_item.setSelected(True)
+
+        # Clean up temporary file list
+        os.remove(temp_file_list)
+
     def onImageVersionChanged(self, shot, combo, idx):
         shot["currentImageVersion"] = idx
         new_path = combo.itemData(idx)
@@ -1093,11 +1168,27 @@ class MainWindow(QMainWindow, ShotManager):
         self.updateList()
 
     def onVideoVersionChanged(self, shot, combo, idx):
-        shot["currentVideoVersion"] = idx
-        new_path = combo.itemData(idx)
-        shot["videoPath"] = new_path
-        self.player.setSource(QUrl.fromLocalFile(new_path))
-        self.updateList()
+        try:
+            if idx < 0 or idx >= combo.count():
+                raise ValueError("Invalid video version index.")
+
+            new_path = combo.itemData(idx)
+            if not new_path or not os.path.exists(new_path):
+                QMessageBox.warning(self, "Error", "Selected video file does not exist.")
+                return
+
+            # Stop the current video before changing
+            self.player.stop()
+
+            # Update shot information
+            shot["currentVideoVersion"] = idx
+            shot["videoPath"] = new_path
+
+            # Set the new video source
+            self.player.setSource(QUrl.fromLocalFile(new_path))
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
 
     def onSelectionChanged(self):
         selected_items = self.listWidget.selectedItems()
