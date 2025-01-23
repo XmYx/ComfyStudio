@@ -97,7 +97,7 @@ class ReorderableListWidget(QWidget):
         self.listWidget.setIconSize(icon_size)
         spacing = max(int(10 * value / 100), 5)  # Prevent spacing from being too small
         self.listWidget.setSpacing(spacing)
-        print(f"Zoom changed to {value}%. Icon size set to {icon_size.width()}x{icon_size.height()}, spacing set to {spacing}.")
+        #print(f"Zoom changed to {value}%. Icon size set to {icon_size.width()}x{icon_size.height()}, spacing set to {spacing}.")
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -105,7 +105,7 @@ class ReorderableListWidget(QWidget):
         relative_pos = self.listWidget.viewport().mapFromParent(pos)
         item = self.listWidget.itemAt(relative_pos)
         if item != self.current_hover_item:
-            print(f"Hover moved to item: {self.getItemLabel(item)}")
+            #print(f"Hover moved to item: {self.getItemLabel(item)}")
             self.hover_timer.stop()
             self.stopVideo()
             self.current_hover_item = item
@@ -114,13 +114,14 @@ class ReorderableListWidget(QWidget):
                 shot = self.parent_window.shots[shot_idx]
                 video_path = shot.get("videoPath")
                 if video_path and os.path.exists(video_path):
-                    print(f"Item '{self.getItemLabel(item)}' has a video. Starting hover timer.")
+                    #print(f"Item '{self.getItemLabel(item)}' has a video. Starting hover timer.")
                     self.hover_timer.start()
                 else:
-                    print(f"Item '{self.getItemLabel(item)}' has no video.")
+                    pass
+                    #print(f"Item '{self.getItemLabel(item)}' has no video.")
 
     def leaveEvent(self, event):
-        print("Cursor left the widget. Stopping video playback.")
+        #print("Cursor left the widget. Stopping video playback.")
         self.hover_timer.stop()
         self.stopVideo()
         self.current_hover_item = None
@@ -132,10 +133,11 @@ class ReorderableListWidget(QWidget):
             shot = self.parent_window.shots[shot_idx]
             video_path = shot.get("videoPath")
             if video_path and os.path.exists(video_path):
-                print(f"Hover timer elapsed. Playing video: {video_path}")
+                #print(f"Hover timer elapsed. Playing video: {video_path}")
                 self.playVideo(video_path, self.current_hover_item)
             else:
-                print(f"No valid video to play for item: {self.getItemLabel(self.current_hover_item)}")
+                pass
+                #print(f"No valid video to play for item: {self.getItemLabel(self.current_hover_item)}")
 
     def playVideo(self, video_path, item):
         try:
@@ -150,17 +152,18 @@ class ReorderableListWidget(QWidget):
                 self.video_output.setGeometry(widget_pos.x(), widget_pos.y(), item_rect.width(), item_rect.height())
                 self.video_output.show()
                 self.video_player.play()
-                print(f"Playing video: {video_path} on item: {self.getItemLabel(item)}")
+                #print(f"Playing video: {video_path} on item: {self.getItemLabel(item)}")
             else:
-                print(f"Invalid item rectangle for item: {self.getItemLabel(item)}")
+                pass
+                #print(f"Invalid item rectangle for item: {self.getItemLabel(item)}")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to play video: {e}")
-            print(f"Error playing video '{video_path}' for item '{self.getItemLabel(item)}': {e}")
+            #print(f"Error playing video '{video_path}' for item '{self.getItemLabel(item)}': {e}")
 
     def stopVideo(self):
         if self.video_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.video_player.stop()
-            print("Stopped video playback.")
+            #print("Stopped video playback.")
         self.video_output.hide()
 
     def startDrag(self, supportedActions):
@@ -176,7 +179,7 @@ class ReorderableListWidget(QWidget):
         pixmap = item.icon().pixmap(self.listWidget.iconSize())
         drag.setPixmap(pixmap)
         drag.exec_(Qt.MoveAction)
-        print(f"Started dragging item: {self.getItemLabel(item)}")
+        #print(f"Started dragging item: {self.getItemLabel(item)}")
 
     def dragMoveEvent(self, event):
         event.setDropAction(Qt.MoveAction)
@@ -200,7 +203,7 @@ class ReorderableListWidget(QWidget):
             item = self.listWidget.takeItem(drag_row)
             self.listWidget.insertItem(drop_row, item)
             self.listWidget.setCurrentItem(item)
-            print(f"Moved item '{self.getItemLabel(item)}' from row {drag_row} to {drop_row}.")
+            #print(f"Moved item '{self.getItemLabel(item)}' from row {drag_row} to {drop_row}.")
             # Update the parent's shots order
             if hasattr(self.parent_window, 'syncShotsFromList'):
                 self.parent_window.syncShotsFromList()
@@ -208,11 +211,11 @@ class ReorderableListWidget(QWidget):
         event.accept()
 
     def onListWidgetContextMenu(self, pos):
-        print(f"Context menu requested at position: {pos}")
+        #print(f"Context menu requested at position: {pos}")
         self.parent_window.onListWidgetContextMenu(pos)
 
     def onSelectionChanged(self):
-        print("Selection changed in list widget.")
+        #print("Selection changed in list widget.")
         self.parent_window.onSelectionChanged()
 
     def addItem(self, icon, label, shot):
@@ -220,11 +223,11 @@ class ReorderableListWidget(QWidget):
         item.setData(Qt.UserRole, shot)  # Store the shot data
         item.setFlags(item.flags() | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
         self.listWidget.addItem(item)
-        print(f"Added item: {label}")
+        #print(f"Added item: {label}")
 
     def clearItems(self):
         self.listWidget.clear()
-        print("Cleared all items from the list widget.")
+        #print("Cleared all items from the list widget.")
 
     def updateItems(self, shots):
         self.clearItems()

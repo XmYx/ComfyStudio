@@ -263,7 +263,7 @@ class WorkflowEditor(QDialog):
         if not self.mainAppRef:
             QMessageBox.warning(self, "Error", "No reference to main app!")
             return
-        print("DEBUG, exposing Global Shot Parameter: ", displayName)
+        #print("DEBUG, exposing Global Shot Parameter: ", displayName)
         paramType, val = self.guessParamType(inputVal)
         self.mainAppRef.addGlobalParam(
             nodeID=nodeID,

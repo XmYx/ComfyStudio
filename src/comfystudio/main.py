@@ -5,9 +5,11 @@ import os
 import random
 import sys
 import tempfile
+import threading
 import urllib
 
 import requests
+from PyQt6.QtWidgets import QTextEdit
 from qtpy.QtCore import (
     Qt,
     QUrl,
@@ -50,12 +52,35 @@ from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
 from comfystudio.sdmodules.shot_manager import ShotManager
 from comfystudio.sdmodules.widgets import ReorderableListWidget
 
+from qtpy.QtCore import QObject, Signal
+
+class EmittingStream(QObject):
+    text_written = Signal(str)
+
+    def write(self, text):
+        self.text_written.emit(str(text))
+
+    def flush(self):
+        pass  # No action needed for flush
+
+import logging
+
+class QtLogHandler(logging.Handler):
+    def __init__(self, emit_stream):
+        super().__init__()
+        self.emit_stream = emit_stream
+
+    def emit(self, record):
+        log_entry = self.format(record)
+        self.emit_stream.write(log_entry + '\n')  # Ensure each log entry ends with a newline
 
 class MainWindow(QMainWindow, ShotManager):
     def __init__(self):
         # super().__init__()
         QMainWindow.__init__(self)
         ShotManager.__init__(self)
+
+
         self.setWindowTitle("Cinema Shot Designer")
         self.resize(1200, 800)
         self.settingsManager = SettingsManager()
@@ -93,11 +118,32 @@ class MainWindow(QMainWindow, ShotManager):
         self.video_workflows = []
         self.current_image_workflow = None
         self.current_video_workflow = None
+
+        self._stdout = sys.stdout
+        self._stderr = sys.stderr
+        self.logStream = EmittingStream()
+        self.logStream.text_written.connect(self.appendLog)
+
+
         self.initUI()
         self.loadPlugins()
         self.loadWorkflows()
         self.updateList()
+    def setupLogging(self):
+        """Sets up the logging handler to redirect logs to the GUI."""
+        # Create an instance of the custom logging handler
+        log_handler = QtLogHandler(self.logStream)
+        log_handler.setLevel(logging.DEBUG)  # Set desired logging level
 
+        # Define a formatter for the logs
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        log_handler.setFormatter(formatter)
+
+        # Add the handler to the root logger
+        logging.getLogger().addHandler(log_handler)
+
+        # Optionally, set the logging level for the root logger
+        logging.getLogger().setLevel(logging.DEBUG)
     def initUI(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -317,17 +363,84 @@ class MainWindow(QMainWindow, ShotManager):
         self.status = self.statusBar()
         self.statusMessage = QLabel("Ready")
         self.status.addPermanentWidget(self.statusMessage, 1)
+        # New log readout label
+        self.logLabel = QLabel("")
+        self.status.addPermanentWidget(self.logLabel)
 
+        # Button to expand terminal
+        self.terminalButton = QPushButton("Terminal")
+        self.status.addPermanentWidget(self.terminalButton)
+        self.terminalButton.clicked.connect(self.toggleTerminalDock)
+
+        # Create the terminal dock, initially hidden
+        self.terminalDock = QDockWidget("Terminal Output", self)
+        self.terminalDock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.terminalTextEdit = QTextEdit()
+        self.terminalTextEdit.setReadOnly(True)
+        self.terminalDock.setWidget(self.terminalTextEdit)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.terminalDock)
+        self.terminalDock.hide()
+    def appendLog(self, text):
+        # Append to the multi-line terminal
+        self.terminalTextEdit.append(text)
+
+        # Update the single-line log label (show last line)
+        current_text = self.logLabel.text()
+        # new_text = (current_text + text).strip().split('\n')[-1]
+        self.logLabel.setText(text)
+
+    def toggleTerminalDock(self):
+        if self.terminalDock.isVisible():
+            self.terminalDock.hide()
+        else:
+            self.terminalDock.show()
+    # def startComfy(self):
+    #     import subprocess
+    #     py_path = self.settingsManager.get("comfy_py_path")
+    #     main_path = self.settingsManager.get("comfy_main_path")
+    #     if py_path and main_path:
+    #         self.comfy_process = subprocess.Popen([py_path, main_path])
+    #         self.statusMessage.setText("Comfy started.")
+    #     else:
+    #         QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
     def startComfy(self):
         import subprocess
         py_path = self.settingsManager.get("comfy_py_path")
         main_path = self.settingsManager.get("comfy_main_path")
         if py_path and main_path:
-            self.comfy_process = subprocess.Popen([py_path, main_path])
-            self.statusMessage.setText("Comfy started.")
+            try:
+                self.comfy_process = subprocess.Popen(
+                    [py_path, main_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,  # Ensures the streams are text, not bytes
+                    bufsize=1,  # Line-buffered
+                    universal_newlines=True  # Ensures universal newline mode
+                )
+                self.statusMessage.setText("Comfy started.")
+                self.appendLog("Comfy process started.")
+
+                # Start threads to read stdout and stderr
+                self.comfy_stdout_thread = threading.Thread(target=self.read_stream, args=(self.comfy_process.stdout,))
+                self.comfy_stderr_thread = threading.Thread(target=self.read_stream, args=(self.comfy_process.stderr,))
+                self.comfy_stdout_thread.daemon = True
+                self.comfy_stderr_thread.daemon = True
+                self.comfy_stdout_thread.start()
+                self.comfy_stderr_thread.start()
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to start Comfy: {e}")
         else:
             QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
 
+    def read_stream(self, stream):
+        """Read lines from the subprocess stream and emit them."""
+        try:
+            for line in iter(stream.readline, ''):
+                if line:
+                    self.logStream.write(line)
+            stream.close()
+        except Exception as e:
+            self.logStream.write(f"Error reading stream: {e}")
     def stopComfy(self):
         if hasattr(self, 'comfy_process'):
             self.comfy_process.terminate()
@@ -897,9 +1010,9 @@ class MainWindow(QMainWindow, ShotManager):
                         debug_info.append(
                             f"[GLOBAL] Node {node_id} input '{input_key}' -> '{pValue}'"
                         )
-        print("=== Debug Param Setting ===")
-        for line in debug_info:
-            print(line)
+        #print("=== Debug Param Setting ===")
+        # for line in debug_info:
+            #print(line)
         comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188").rstrip("/")
         url = f"{comfy_ip}/prompt"
         headers = {"Content-Type": "application/json"}
@@ -1300,19 +1413,35 @@ class MainWindow(QMainWindow, ShotManager):
             if reply == QMessageBox.StandardButton.Yes:
                 self.saveProject()
                 self.settingsManager.save()
+                sys.stdout = self._stdout
+                sys.stderr = self._stderr
+                self.stopComfy()
                 event.accept()
             elif reply == QMessageBox.StandardButton.No:
                 self.settingsManager.save()
+                sys.stdout = self._stdout
+                sys.stderr = self._stderr
+                self.stopComfy()
+
                 event.accept()
             else:
                 event.ignore()
         else:
             self.settingsManager.save()
+            sys.stdout = self._stdout
+            sys.stderr = self._stderr
+            self.stopComfy()
+
             event.accept()
 
 def main():
+    from comfystudio.sdmodules.qss import qss
     app = QApplication(sys.argv)
+    app.setStyleSheet(qss)
     window = MainWindow()
+    sys.stdout = window.logStream
+    sys.stderr = window.logStream
+    # window.setupLogging()
     window.show()
     sys.exit(app.exec())
 
