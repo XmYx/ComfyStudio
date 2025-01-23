@@ -20,7 +20,8 @@ from qtpy.QtGui import (
     QAction,
     QPixmap,
     QIcon,
-    QColor
+    QColor,
+    QDrag
 )
 from qtpy.QtWidgets import (
     QApplication,
@@ -157,6 +158,9 @@ class MainWindow(QMainWindow):
         self.shots = []
         self.currentShotIndex = None
         self.last_prompt_id = None
+
+
+        # self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
         self.renderQueue = []
         self.activePrompts = {}
         self.result_timer = QTimer()
@@ -176,12 +180,60 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.mainLayout = QVBoxLayout(central)
 
+        # class ReorderableListWidget(QListWidget):
+        #     def dropEvent(self, event):
+        #         super().dropEvent(event)  # Perform the default drop behavior
+        #         # After the drop, update the parent’s shots order
+        #         if hasattr(self.parent(), 'syncShotsFromList'):
+        #             self.parent().syncShotsFromList()
+        #         self.doItemsLayout()
+        #         self.viewport().update()
         class ReorderableListWidget(QListWidget):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setAcceptDrops(True)
+                self.setDragEnabled(True)
+                self.setDropIndicatorShown(True)
+                self.drag_item = None
+
+            def startDrag(self, supportedActions):
+                item = self.currentItem()
+                self.drag_item = item
+                drag = QDrag(self)
+                mimeData = self.mimeData([item])
+                drag.setMimeData(mimeData)
+                drag.setHotSpot(self.visualItemRect(item).topLeft())
+
+                pixmap = item.icon().pixmap(self.iconSize())
+                drag.setPixmap(pixmap)
+                drag.exec_(Qt.MoveAction)
+
+            def dragMoveEvent(self, event):
+                event.setDropAction(Qt.MoveAction)
+                event.accept()
+
             def dropEvent(self, event):
-                super().dropEvent(event)  # Perform the default drop behavior
-                # After the drop, update the parent’s shots order
-                if hasattr(self.parent(), 'syncShotsFromList'):
-                    self.parent().syncShotsFromList()
+                pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+                drop_item = self.itemAt(pos)
+
+                if drop_item is None:
+                    drop_row = self.count()
+                else:
+                    drop_row = self.row(drop_item)
+
+                drag_row = self.row(self.drag_item)
+
+                if drag_row != drop_row:
+                    # Reorder items
+                    item = self.takeItem(drag_row)
+                    self.insertItem(drop_row, item)
+                    self.setCurrentItem(item)
+                    # Update the parent's shots order
+                    if hasattr(self.parent(), 'syncShotsFromList'):
+                        self.parent().syncShotsFromList()
+                self.drag_item = None
+                event.accept()
+
 
         # Shots list
         self.listWidget = ReorderableListWidget()
@@ -201,7 +253,6 @@ class MainWindow(QMainWindow):
         self.listWidget.setDragDropMode(self.listWidget.DragDropMode.InternalMove)
         self.listWidget.setMovement(self.listWidget.Movement.Free)
         self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
         self.listWidget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.listWidget.itemSelectionChanged.connect(self.onSelectionChanged)
         self.mainLayout.addWidget(self.listWidget)
@@ -301,10 +352,11 @@ class MainWindow(QMainWindow):
         new_order = []
         for i in range(self.listWidget.count()):
             item = self.listWidget.item(i)
-            idx = item.data(Qt.ItemDataRole.UserRole)
-            # Skip the special "Add New Shot" item if idx is None or idx == -1:
-            continue
-            new_order.append(self.shots[idx])
+            shot = item.data(Qt.ItemDataRole.UserRole)
+            # Skip the 'Add New Shot' item
+            if shot is None:
+                continue
+            new_order.append(shot)
         self.shots = new_order
         self.updateList()
 
@@ -373,6 +425,8 @@ class MainWindow(QMainWindow):
         renderAllStillsBtn = QAction("Render All Stills", self)
         renderAllVideosBtn = QAction("Render All Videos", self)
         stopRenderingBtn = QAction("Stop Rendering", self)
+        addShotBtn = QAction("Add New Shot", self)  # New button
+        toolbar.addAction(addShotBtn)  # Add to toolbar
         toolbar.addAction(renderAllStillsBtn)
         toolbar.addAction(renderAllVideosBtn)
         toolbar.addAction(stopRenderingBtn)
@@ -380,6 +434,7 @@ class MainWindow(QMainWindow):
         self.stopComfyBtn = QAction("Stop Comfy", self)
         toolbar.addAction(self.startComfyBtn)
         toolbar.addAction(self.stopComfyBtn)
+        addShotBtn.triggered.connect(self.addShot)  # Connect to addShot method
         renderAllStillsBtn.triggered.connect(self.onGenerateAllStills)
         renderAllVideosBtn.triggered.connect(self.onGenerateAllVideos)
         stopRenderingBtn.triggered.connect(self.stopRendering)
@@ -586,39 +641,44 @@ class MainWindow(QMainWindow):
             icon = self.getShotIcon(shot)
             label_text = f"Shot {i + 1}"
             item = QListWidgetItem(icon, label_text)
-            item.setData(Qt.ItemDataRole.UserRole, i)
+            # Store the shot object in UserRole
+            item.setData(Qt.ItemDataRole.UserRole, shot)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             self.listWidget.addItem(item)
         # "Add New Shot"
-        addIcon = QIcon()
-        addItem = QListWidgetItem(addIcon, "Add New Shot")
-        addItem.setData(Qt.ItemDataRole.UserRole, -1)
-        addItem.setFlags(addItem.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-        self.listWidget.addItem(addItem)
+        # addIcon = QIcon()
+        # addItem = QListWidgetItem(addIcon, "Add New Shot")
+        # addItem.setData(Qt.ItemDataRole.UserRole, None)  # Use None to denote 'Add New Shot' item
+        # addItem.setFlags(addItem.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+        # self.listWidget.addItem(addItem)
 
     def onItemClicked(self, item):
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx == -1:
+        shot = item.data(Qt.ItemDataRole.UserRole)
+        if shot is None:
             self.addShot()
         else:
-            self.currentShotIndex = idx
-            self.fillDock()
+            try:
+                self.currentShotIndex = self.shots.index(shot)
+                print("currentShotIndex", self.currentShotIndex)
+                self.fillDock()
+            except ValueError:
+                self.currentShotIndex = None
+                self.clearDock()
 
     def onListWidgetContextMenu(self, pos: QPoint):
-        """Show a right-click context menu on the shots list for deleting or duplicating shots."""
         selected_items = self.listWidget.selectedItems()
         if not selected_items:
             return
 
-        # Collect valid indices (exclude 'Add New Shot' and invalid indices)
-        valid_indices = []
+        # Collect valid shots (exclude 'Add New Shot' and invalid items)
+        valid_shots = []
         for item in selected_items:
-            idx = item.data(Qt.ItemDataRole.UserRole)
-            if idx is None or idx == -1 or idx >= len(self.shots):
-                continue  # Skip invalid items
-            valid_indices.append(idx)
+            shot = item.data(Qt.ItemDataRole.UserRole)
+            if shot is None:
+                continue  # Skip 'Add New Shot' item
+            valid_shots.append(shot)
 
-        if not valid_indices:
+        if not valid_shots:
             return
 
         menu = QMenu(self)
@@ -632,22 +692,22 @@ class MainWindow(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Delete Shot(s)",
-                f"Are you sure you want to delete the selected shots?",
+                "Are you sure you want to delete the selected shots?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
-                # Delete shots in reverse order to avoid index issues
-                for idx in sorted(valid_indices, reverse=True):
-                    del self.shots[idx]
+                # Delete shots
+                for shot in valid_shots:
+                    if shot in self.shots:
+                        self.shots.remove(shot)
                 self.currentShotIndex = None
                 self.updateList()
                 self.clearDock()
         elif action == duplicateAction:
             # Duplicate shots
-            for idx in valid_indices:
-                ref_shot = self.shots[idx]
-                new_shot = copy.deepcopy(ref_shot)
-                new_shot["name"] = f"{ref_shot['name']} (Copy)"
+            for shot in valid_shots:
+                new_shot = copy.deepcopy(shot)
+                new_shot["name"] = f"{shot['name']} (Copy)"
                 # Clear out any final paths/versions if needed
                 new_shot["stillPath"] = ""
                 new_shot["videoPath"] = ""
@@ -659,8 +719,9 @@ class MainWindow(QMainWindow):
             self.updateList()
         elif action == extendAction:
             # Extend clips
-            for idx in valid_indices:
-                self.extendClip(idx)
+            for shot in valid_shots:
+                shotIndex = self.shots.index(shot)
+                self.extendClip(shotIndex)
 
     def clearDock(self):
         for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
@@ -892,10 +953,14 @@ class MainWindow(QMainWindow):
     def onSelectionChanged(self):
         selected_items = self.listWidget.selectedItems()
         if len(selected_items) == 1:
-            idx = selected_items[0].data(Qt.ItemDataRole.UserRole)
-            if idx != -1:
-                self.currentShotIndex = idx
-                self.fillDock()
+            shot = selected_items[0].data(Qt.ItemDataRole.UserRole)
+            if shot is not None:
+                try:
+                    self.currentShotIndex = self.shots.index(shot)
+                    self.fillDock()
+                except ValueError:
+                    self.currentShotIndex = None
+                    self.clearDock()
             else:
                 self.currentShotIndex = None
                 self.clearDock()
