@@ -46,7 +46,7 @@ class SettingsManager:
             ],
             "workflow_params": {}
         }
-        # self.load()
+        self.load()
 
     def load(self):
         try:

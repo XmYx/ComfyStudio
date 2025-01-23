@@ -125,7 +125,8 @@ class WorkflowEditor(QDialog):
             self.formLayoutImage.addRow(QLabel(f"<b>{node_id} - {title}</b>"))
 
             for inp_name, inp_value in inputs.items():
-                rowLabel = QLabel(title + " " + inp_name)
+                rowLabelString = title + " " + inp_name
+                rowLabel = QLabel(inp_name)
                 rowEdit = QLineEdit(str(inp_value))
 
                 def mkCallback(rowEditRef, nodeId=node_id, inName=inp_name):
@@ -140,18 +141,20 @@ class WorkflowEditor(QDialog):
                 exposeGlobalBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=rowLabel,
-                    iVal=rowEdit.text():
-                    self.exposeParamGlobal(nID, iName, iVal, isVideo=False)
+                    iName=inp_name,
+                    iVal=rowEdit.text(),
+                    disName=rowLabelString:
+                    self.exposeParamGlobal(nID, iName, iVal, isVideo=False, displayName=disName)
                 )
 
                 exposeShotBtn = QPushButton("Expose Shot")
                 exposeShotBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=rowLabel,
-                    iVal=rowEdit.text():
-                    self.exposeParamShot(nID, iName, iVal, isVideo=False)
+                    iName=inp_name,
+                    iVal=rowEdit.text(),
+                    disName=rowLabelString:
+                    self.exposeParamShot(nID, iName, iVal, isVideo=False, displayName=disName)
                 )
 
                 rowWidget = QWidget()
@@ -209,10 +212,11 @@ class WorkflowEditor(QDialog):
             self.formLayoutVideo.addRow(QLabel(f"<b>{node_id} - {title}</b>"))
 
             for inp_name, inp_value in inputs.items():
-                rowLabel = QLabel(title + " " + inp_name)
+                rowLabelString = title + " " + inp_name
+                rowLabel = QLabel(inp_name)
                 rowEdit = QLineEdit(str(inp_value))
 
-                def mkCallback(rowEditRef, nodeId=node_id, inName=inp_name):
+                def mkCallback(rowEditRef, nodeId=node_id, inName=inp_name, disName=rowLabelString):
                     def _callback(txt):
                         self.workflowDataVideo[nodeId]["inputs"][inName] = txt
                     return _callback
@@ -223,18 +227,20 @@ class WorkflowEditor(QDialog):
                 exposeGlobalBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=rowLabel,
-                    iVal=rowEdit.text():
-                    self.exposeParamGlobal(nID, iName, iVal, isVideo=True)
+                    iName=inp_name,
+                    iVal=rowEdit.text(),
+                    disName=rowLabelString:
+                    self.exposeParamGlobal(nID, iName, iVal, isVideo=True, displayName=disName)
                 )
 
                 exposeShotBtn = QPushButton("Expose Shot")
                 exposeShotBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=rowLabel,
-                    iVal=rowEdit.text():
-                    self.exposeParamShot(nID, iName, iVal, isVideo=True)
+                    iName=inp_name,
+                    iVal=rowEdit.text(),
+                    disName=rowLabelString:
+                    self.exposeParamShot(nID, iName, iVal, isVideo=True, displayName=disName)
                 )
 
                 rowWidget = QWidget()
@@ -249,7 +255,7 @@ class WorkflowEditor(QDialog):
     # ---------------------
     # Expose Param
     # ---------------------
-    def exposeParamGlobal(self, nodeID, inputName, inputVal, isVideo):
+    def exposeParamGlobal(self, nodeID, inputName, inputVal, isVideo, displayName):
         """
         Expose a param as a global image/video (or generic) parameter in the main app.
         We never force 'image' or 'video' here; we simply guess type from inputVal.
@@ -257,17 +263,19 @@ class WorkflowEditor(QDialog):
         if not self.mainAppRef:
             QMessageBox.warning(self, "Error", "No reference to main app!")
             return
-
+        print("DEBUG, exposing Global Shot Parameter: ", displayName)
         paramType, val = self.guessParamType(inputVal)
         self.mainAppRef.addGlobalParam(
             nodeID=nodeID,
             paramName=inputName,
             paramType=paramType,
             paramValue=val,
-            isVideo=isVideo
+            isVideo=isVideo,
+            displayName=displayName
+
         )
 
-    def exposeParamShot(self, nodeID, inputName, inputVal, isVideo):
+    def exposeParamShot(self, nodeID, inputName, inputVal, isVideo, displayName):
         """
         Expose a param directly to the currently selected shot (image or video param) or a generic param.
         We do *not* override the paramType to 'image'/'video'; we rely solely on guessParamType().
@@ -283,7 +291,8 @@ class WorkflowEditor(QDialog):
             paramName=inputName,
             paramType=paramType,
             paramValue=val,
-            isVideo=isVideo
+            isVideo=isVideo,
+            displayName=displayName
         )
 
     def guessParamType(self, inputVal):

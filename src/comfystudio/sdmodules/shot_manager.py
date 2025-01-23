@@ -42,20 +42,20 @@ class ShotManager:
         for idx, param in enumerate(shot.get("imageParams", [])):
             ptype = param.get("type", "string")
             rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True)
-            self.imageForm.addRow(param["name"], rowWidget)
+            self.imageForm.addRow(param.get("displayName", param["name"]), rowWidget)
         # --- 2) Shot Video Params ---
         for idx, param in enumerate(shot.get("videoParams", [])):
             ptype = param.get("type", "string")
             rowWidget = self.createParamWidgetWithRemove(param, isVideo=True, isShotLevel=True)
-            self.videoForm.addRow(param["name"], rowWidget)
+            self.videoForm.addRow(param.get("displayName", param["name"]), rowWidget)
         # --- 3) Shot Misc => shotParams + shot["params"] ---
         for idx, param in enumerate(shot["shotParams"]):
             ptype = param.get("type", "string")
             rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True, misc=True)
-            self.currentShotForm.addRow(param["name"], rowWidget)
+            self.currentShotForm.addRow(param.get("displayName", param["name"]), rowWidget)
         for idx, param in enumerate(shot["params"]):
             ptype = param.get("type", "string")
-            pname = param.get("name", "Unknown")
+            pname = param.get("displayName", "Unknown")
             rowWidget = self.createParamWidgetWithRemove(param, isVideo=False, isShotLevel=True, misc=True)
             self.currentShotForm.addRow(pname, rowWidget)
         # Versions & video preview

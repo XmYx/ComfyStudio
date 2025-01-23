@@ -491,14 +491,14 @@ class MainWindow(QMainWindow, ShotManager):
             self.globalImageForm.removeRow(0)
         for idx, param in enumerate(self.globalImageParams):
             rowWidget = self.createGlobalParamWidget(param, isVideo=False)
-            self.globalImageForm.addRow(param.get("name", f"Param {idx}"), rowWidget)
+            self.globalImageForm.addRow(param.get("displayName", f"Param {idx}"), rowWidget)
 
     def refreshGlobalVideoParams(self):
         while self.globalVideoForm.rowCount() > 0:
             self.globalVideoForm.removeRow(0)
         for idx, param in enumerate(self.globalVideoParams):
             rowWidget = self.createGlobalParamWidget(param, isVideo=True)
-            self.globalVideoForm.addRow(param.get("name", f"Param {idx}"), rowWidget)
+            self.globalVideoForm.addRow(param.get("displayName", f"Param {idx}"), rowWidget)
 
     def createGlobalParamWidget(self, param, isVideo=False):
         container = QWidget()
@@ -566,11 +566,12 @@ class MainWindow(QMainWindow, ShotManager):
                     shot["imageParams"].remove(param)
         self.fillDock()
 
-    def addGlobalParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
+    def addGlobalParam(self, nodeID, paramName, paramType, paramValue, isVideo=False, displayName=""):
         """Creates a new param dictionary and appends it to either globalVideoParams or globalImageParams."""
         new_param = {
             "type": paramType,
             "name": paramName,
+            "displayName": displayName,
             "value": paramValue,
             "nodeIDs": [str(nodeID)],
             "useShotImage": False,
@@ -595,11 +596,12 @@ class MainWindow(QMainWindow, ShotManager):
             )
             self.saveCurrentWorkflowParams(isVideo=False)
 
-    def addShotParam(self, nodeID, paramName, paramType, paramValue, isVideo=False):
+    def addShotParam(self, nodeID, paramName, paramType, paramValue, isVideo=False, displayName=""):
         """Add shot parameter and store it in defaults."""
         new_param = {
             "type": paramType,
             "name": paramName,
+            "displayName": displayName,
             "value": paramValue,
             "nodeIDs": [str(nodeID)]
         }
