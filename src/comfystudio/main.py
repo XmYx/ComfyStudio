@@ -45,7 +45,8 @@ from qtpy.QtWidgets import (
     QMessageBox,
     QCheckBox,
     QTabWidget,
-    QInputDialog
+    QInputDialog,
+    QAbstractItemView
 )
 from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
 from qtpy.QtMultimediaWidgets import QVideoWidget
@@ -201,6 +202,8 @@ class MainWindow(QMainWindow):
         self.listWidget.setMovement(self.listWidget.Movement.Free)
         self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
+        self.listWidget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.listWidget.itemSelectionChanged.connect(self.onSelectionChanged)
         self.mainLayout.addWidget(self.listWidget)
 
         # Dock for shot parameters
@@ -602,46 +605,62 @@ class MainWindow(QMainWindow):
             self.fillDock()
 
     def onListWidgetContextMenu(self, pos: QPoint):
-        """Show a right-click context menu on the shots list for deleting or duplicating a shot."""
-        item = self.listWidget.itemAt(pos)
-        if not item:
+        """Show a right-click context menu on the shots list for deleting or duplicating shots."""
+        selected_items = self.listWidget.selectedItems()
+        if not selected_items:
             return
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx < 0 or idx >= len(self.shots):
-            return  # Ignore the 'Add new shot' item or out-of-bounds
+
+        # Collect valid indices (exclude 'Add New Shot' and invalid indices)
+        valid_indices = []
+        for item in selected_items:
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            if idx is None or idx == -1 or idx >= len(self.shots):
+                continue  # Skip invalid items
+            valid_indices.append(idx)
+
+        if not valid_indices:
+            return
+
         menu = QMenu(self)
-        deleteAction = menu.addAction("Delete Shot")
-        duplicateAction = menu.addAction("Duplicate Shot")
-        extendAction = menu.addAction("Extend Clip")
+        deleteAction = menu.addAction("Delete Shot(s)")
+        duplicateAction = menu.addAction("Duplicate Shot(s)")
+        extendAction = menu.addAction("Extend Clip(s)")
         action = menu.exec(self.listWidget.mapToGlobal(pos))
+
         if action == deleteAction:
-            # Confirm
+            # Confirm deletion
             reply = QMessageBox.question(
                 self,
-                "Delete Shot",
-                f"Are you sure you want to delete '{self.shots[idx].get('name','Shot')}'?",
+                "Delete Shot(s)",
+                f"Are you sure you want to delete the selected shots?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
-                del self.shots[idx]
+                # Delete shots in reverse order to avoid index issues
+                for idx in sorted(valid_indices, reverse=True):
+                    del self.shots[idx]
                 self.currentShotIndex = None
                 self.updateList()
                 self.clearDock()
         elif action == duplicateAction:
-            ref_shot = self.shots[idx]
-            new_shot = copy.deepcopy(ref_shot)
-            new_shot["name"] = f"{ref_shot['name']} (Copy)"
-            # Clear out any final paths/versions if you want
-            new_shot["stillPath"] = ""
-            new_shot["videoPath"] = ""
-            new_shot["imageVersions"] = []
-            new_shot["videoVersions"] = []
-            new_shot["currentImageVersion"] = -1
-            new_shot["currentVideoVersion"] = -1
-            self.shots.append(new_shot)
+            # Duplicate shots
+            for idx in valid_indices:
+                ref_shot = self.shots[idx]
+                new_shot = copy.deepcopy(ref_shot)
+                new_shot["name"] = f"{ref_shot['name']} (Copy)"
+                # Clear out any final paths/versions if needed
+                new_shot["stillPath"] = ""
+                new_shot["videoPath"] = ""
+                new_shot["imageVersions"] = []
+                new_shot["videoVersions"] = []
+                new_shot["currentImageVersion"] = -1
+                new_shot["currentVideoVersion"] = -1
+                self.shots.append(new_shot)
             self.updateList()
         elif action == extendAction:
-            self.extendClip(idx)
+            # Extend clips
+            for idx in valid_indices:
+                self.extendClip(idx)
 
     def clearDock(self):
         for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
@@ -869,6 +888,20 @@ class MainWindow(QMainWindow):
         shot["videoPath"] = new_path
         self.player.setSource(QUrl.fromLocalFile(new_path))
         self.updateList()
+
+    def onSelectionChanged(self):
+        selected_items = self.listWidget.selectedItems()
+        if len(selected_items) == 1:
+            idx = selected_items[0].data(Qt.ItemDataRole.UserRole)
+            if idx != -1:
+                self.currentShotIndex = idx
+                self.fillDock()
+            else:
+                self.currentShotIndex = None
+                self.clearDock()
+        else:
+            self.currentShotIndex = None
+            self.clearDock()
 
     def refreshGlobalImageParams(self):
         while self.globalImageForm.rowCount() > 0:
