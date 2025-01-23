@@ -28,6 +28,15 @@
             "nodeIDs": [
                 "1"
             ]
+        },
+        {
+            "type": "video",
+            "name": "Video",
+            "value": "",
+            "useShotVideo": true,
+            "nodeIDs": [
+                "2"
+            ]
         }
     ],
     "global_image_params": [

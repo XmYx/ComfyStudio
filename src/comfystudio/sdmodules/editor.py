@@ -125,7 +125,7 @@ class WorkflowEditor(QDialog):
             self.formLayoutImage.addRow(QLabel(f"<b>{node_id} - {title}</b>"))
 
             for inp_name, inp_value in inputs.items():
-                rowLabel = QLabel(inp_name)
+                rowLabel = QLabel(title + " " + inp_name)
                 rowEdit = QLineEdit(str(inp_value))
 
                 def mkCallback(rowEditRef, nodeId=node_id, inName=inp_name):
@@ -140,7 +140,7 @@ class WorkflowEditor(QDialog):
                 exposeGlobalBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=inp_name,
+                    iName=rowLabel,
                     iVal=rowEdit.text():
                     self.exposeParamGlobal(nID, iName, iVal, isVideo=False)
                 )
@@ -149,7 +149,7 @@ class WorkflowEditor(QDialog):
                 exposeShotBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=inp_name,
+                    iName=rowLabel,
                     iVal=rowEdit.text():
                     self.exposeParamShot(nID, iName, iVal, isVideo=False)
                 )
@@ -209,7 +209,7 @@ class WorkflowEditor(QDialog):
             self.formLayoutVideo.addRow(QLabel(f"<b>{node_id} - {title}</b>"))
 
             for inp_name, inp_value in inputs.items():
-                rowLabel = QLabel(inp_name)
+                rowLabel = QLabel(title + " " + inp_name)
                 rowEdit = QLineEdit(str(inp_value))
 
                 def mkCallback(rowEditRef, nodeId=node_id, inName=inp_name):
@@ -223,7 +223,7 @@ class WorkflowEditor(QDialog):
                 exposeGlobalBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=inp_name,
+                    iName=rowLabel,
                     iVal=rowEdit.text():
                     self.exposeParamGlobal(nID, iName, iVal, isVideo=True)
                 )
@@ -232,7 +232,7 @@ class WorkflowEditor(QDialog):
                 exposeShotBtn.clicked.connect(
                     lambda _=False,
                     nID=node_id,
-                    iName=inp_name,
+                    iName=rowLabel,
                     iVal=rowEdit.text():
                     self.exposeParamShot(nID, iName, iVal, isVideo=True)
                 )

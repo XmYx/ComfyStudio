@@ -21,6 +21,7 @@ class SettingsManager:
             "CinemaShotDesigner",
             "user_settings.json"
         )
+
         self.data = {
             "comfy_py_path": "",
             "comfy_main_path": "",
@@ -35,10 +36,17 @@ class SettingsManager:
                     "useShotImage": True,
                     "nodeIDs": ["1"]
                 },
+                {
+                    "type": "video",
+                    "name": "Video",
+                    "value": "",
+                    "useShotVideo": True,
+                    "nodeIDs": ["2"]
+                },
             ],
             "workflow_params": {}
         }
-        self.load()
+        # self.load()
 
     def load(self):
         try:

@@ -71,11 +71,17 @@ class MainWindow(QMainWindow, ShotManager):
                 "useShotImage": True,
                 "nodeIDs": ["1"]
             },
+            {
+                "type": "video",
+                "name": "Video",
+                "value": "",
+                "useShotVideo": True,
+                "nodeIDs": ["2"]
+            },
         ])
         self.currentFilePath = None
 
         self.last_prompt_id = None
-
 
         # self.listWidget.model().rowsMoved.connect(self.onShotsReordered)
         self.renderQueue = []
@@ -98,26 +104,27 @@ class MainWindow(QMainWindow, ShotManager):
         self.mainLayout = QVBoxLayout(central)
 
         # Shots list
-        self.listWidget = ReorderableListWidget()
-        self.listWidget.setViewMode(self.listWidget.ViewMode.IconMode)
-        self.listWidget.setFlow(self.listWidget.Flow.LeftToRight)
-        self.listWidget.setWrapping(True)
-        self.listWidget.setResizeMode(self.listWidget.ResizeMode.Adjust)
-        self.listWidget.setMovement(self.listWidget.Movement.Static)
-        self.listWidget.setIconSize(QSize(120, 90))
-        self.listWidget.setSpacing(10)
-        self.listWidget.itemClicked.connect(self.onItemClicked)
-        self.listWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.listWidget.customContextMenuRequested.connect(self.onListWidgetContextMenu)
-        self.listWidget.setDragEnabled(True)
-        self.listWidget.setAcceptDrops(True)
-        self.listWidget.setDropIndicatorShown(True)
-        self.listWidget.setDragDropMode(self.listWidget.DragDropMode.InternalMove)
-        self.listWidget.setMovement(self.listWidget.Movement.Free)
-        self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.listWidget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.listWidget.itemSelectionChanged.connect(self.onSelectionChanged)
-        self.mainLayout.addWidget(self.listWidget)
+        self.listWidgetBase = ReorderableListWidget(self)
+        self.listWidget = self.listWidgetBase.listWidget
+        # self.listWidget.setViewMode(self.listWidget.ViewMode.IconMode)
+        # self.listWidget.setFlow(self.listWidget.Flow.LeftToRight)
+        # self.listWidget.setWrapping(True)
+        # self.listWidget.setResizeMode(self.listWidget.ResizeMode.Adjust)
+        # self.listWidget.setMovement(self.listWidget.Movement.Static)
+        # self.listWidget.setIconSize(QSize(120, 90))
+        # self.listWidget.setSpacing(10)
+        # self.listWidget.itemClicked.connect(self.onItemClicked)
+        # self.listWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # self.listWidget.customContextMenuRequested.connect(self.onListWidgetContextMenu)
+        # self.listWidget.setDragEnabled(True)
+        # self.listWidget.setAcceptDrops(True)
+        # self.listWidget.setDropIndicatorShown(True)
+        # self.listWidget.setDragDropMode(self.listWidget.DragDropMode.InternalMove)
+        # self.listWidget.setMovement(self.listWidget.Movement.Free)
+        # self.listWidget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        # self.listWidget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        # self.listWidget.itemSelectionChanged.connect(self.onSelectionChanged)
+        self.mainLayout.addWidget(self.listWidgetBase)
 
         # Dock for shot parameters
         self.dock = QDockWidget("Shot Parameters", self)
@@ -437,10 +444,13 @@ class MainWindow(QMainWindow, ShotManager):
 
     def createVideoParamWidget(self, param):
         if param.get("type", "string") != "video":
-            # Fallback to basic widget if it's not really an image param
+            # Fallback to basic widget if it's not really a video param
             return self.createBasicParamWidget(param)
         container = QWidget()
-        hbox = QHBoxLayout(container)
+        layout = QVBoxLayout(container)
+
+        # First row: Path selection
+        row1 = QHBoxLayout()
         pathEdit = QLineEdit(param["value"])
         selectBtn = QPushButton("Select")
         preview = QLabel("No Video")
@@ -457,9 +467,23 @@ class MainWindow(QMainWindow, ShotManager):
 
         pathEdit.textChanged.connect(lambda val, p=param: self.onParamChanged(p, val))
         selectBtn.clicked.connect(onSelect)
-        hbox.addWidget(pathEdit)
-        hbox.addWidget(selectBtn)
-        hbox.addWidget(preview)
+        row1.addWidget(pathEdit)
+        row1.addWidget(selectBtn)
+        row1.addWidget(preview)
+
+        # Second row: Use Rendered Shot checkbox
+        row2 = QHBoxLayout()
+        useShotCheck = QCheckBox("Use Rendered Shot")
+        useShotCheck.setChecked(param.get("useShotVideo", False))  # Updated key
+
+        def onUseShotToggled(state):
+            param["useShotVideo"] = bool(state)  # Updated key
+
+        useShotCheck.stateChanged.connect(onUseShotToggled)
+        row2.addWidget(useShotCheck)
+
+        layout.addLayout(row1)
+        layout.addLayout(row2)
         return container
 
     def refreshGlobalImageParams(self):
@@ -549,7 +573,8 @@ class MainWindow(QMainWindow, ShotManager):
             "name": paramName,
             "value": paramValue,
             "nodeIDs": [str(nodeID)],
-            "useShotImage": False
+            "useShotImage": False,
+            "useShotVideo": False
         }
         if isVideo:
             self.globalVideoParams.append(new_param)
@@ -611,15 +636,7 @@ class MainWindow(QMainWindow, ShotManager):
             self.globalVideoParams = copy.deepcopy(workflow_data.get("global_video_params", []))
             self.defaultVideoParams = copy.deepcopy(workflow_data.get("default_video_params", []))
             if not self.defaultVideoParams:
-                self.defaultVideoParams = [
-                    {
-                        "type": "image",
-                        "name": "Image",
-                        "value": "",
-                        "useShotImage": True,
-                        "nodeIDs": ["1"]
-                    },
-                ]
+                self.defaultVideoParams = self.settingsManager.get("default_video_params", [])
             self.refreshGlobalVideoParams()
             self.updateShotsParams(isVideo=True)
         else:
@@ -680,7 +697,7 @@ class MainWindow(QMainWindow, ShotManager):
         cap.release()
         new_shot = copy.deepcopy(shot)
         new_shot["name"] = f"{shot['name']} Extended"
-        new_shot["videoPath"] = ""
+        new_shot["videoPath"] = video_path
         new_shot["videoVersions"] = []
         new_shot["currentVideoVersion"] = -1
         new_shot["stillPath"] = frame_filename
@@ -842,6 +859,12 @@ class MainWindow(QMainWindow, ShotManager):
                             inputs_dict[input_key] = val_to_set
                             debug_info.append(
                                 f"[SHOT] Node {node_id} input '{input_key}' (image) -> '{val_to_set}'"
+                            )
+                        elif pType == "video" and param.get("useShotVideo"):  # Added handling for video
+                            val_to_set = the_shot.get("videoPath") or pValue
+                            inputs_dict[input_key] = val_to_set
+                            debug_info.append(
+                                f"[SHOT] Node {node_id} input '{input_key}' (video) -> '{val_to_set}'"
                             )
                         else:
                             inputs_dict[input_key] = pValue
@@ -1138,7 +1161,7 @@ class MainWindow(QMainWindow, ShotManager):
         import subprocess
         subprocess.run(command, check=True)
 
-        idx = selected_items[-1].data(Qt.ItemDataRole.UserRole) + 1  # After the last selected shot
+        idx = int(selected_items[-1].data(Qt.ItemDataRole.UserRole))  # After the last selected shot
 
         new_shot = copy.deepcopy(self.shots[idx])
         new_shot["name"] = f"{new_shot['name']} Merged"
@@ -1150,7 +1173,7 @@ class MainWindow(QMainWindow, ShotManager):
         new_shot["lastVideoSignature"] = self.computeRenderSignature(new_shot, isVideo=True)
 
         # Insert the new shot into the shots list
-        self.shots.insert(idx, new_shot)
+        self.shots.insert(idx + 1, new_shot)
         self.updateList()
 
         # Optionally, select the new shot
