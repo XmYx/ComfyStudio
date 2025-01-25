@@ -24,13 +24,15 @@ from qtpy.QtWidgets import (
 class ShotManager:
 
     def __init__(self):
-
         self.shots = []
         self.currentShotIndex = None
     def clearDock(self):
-        for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
-            while frm.rowCount() > 0:
-                frm.removeRow(0)
+        try:
+            for frm in [self.imageForm, self.videoForm, self.currentShotForm]:
+                while frm.rowCount() > 0:
+                    frm.removeRow(0)
+        except:
+            pass
 
     def fillDock(self):
         """Fill the three shot tabs."""

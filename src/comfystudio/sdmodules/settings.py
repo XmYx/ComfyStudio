@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import json
 import os
+import sys
 
 from qtpy.QtCore import (
     QStandardPaths
@@ -10,7 +11,9 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QFormLayout,
     QPushButton,
-    QDialog
+    QDialog,
+    QFileDialog,
+    QLabel
 )
 
 
@@ -75,19 +78,55 @@ class SettingsManager:
     def get(self, key, default=None):
         return self.data.get(key, default)
 
+
 class SettingsDialog(QDialog):
     def __init__(self, settingsManager, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.settingsManager = settingsManager
         layout = QFormLayout(self)
+
+        # Comfy IP
         self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
         layout.addRow("ComfyUI IP/Port:", self.comfyIpEdit)
-        self.comfyPyPathEdit = QLineEdit(self.settingsManager.get("comfy_py_path", ""))
-        layout.addRow("Comfy Python Path:", self.comfyPyPathEdit)
-        self.comfyMainPathEdit = QLineEdit(self.settingsManager.get("comfy_main_path", ""))
-        layout.addRow("Comfy Main Path:", self.comfyMainPathEdit)
 
+        # Comfy Python Path with Browse Button
+        self.comfyPyPathEdit = QLineEdit(self.settingsManager.get("comfy_py_path", ""))
+        self.comfyPyBrowseBtn = QPushButton("Browse")
+        self.comfyPyBrowseBtn.clicked.connect(self.browse_comfy_py_path)
+        comfyPyLayout = QHBoxLayout()
+        comfyPyLayout.addWidget(self.comfyPyPathEdit)
+        comfyPyLayout.addWidget(self.comfyPyBrowseBtn)
+        layout.addRow("Comfy Python Path:", comfyPyLayout)
+
+        # Comfy Main Path with Browse Button
+        self.comfyMainPathEdit = QLineEdit(self.settingsManager.get("comfy_main_path", ""))
+        self.comfyMainBrowseBtn = QPushButton("Browse")
+        self.comfyMainBrowseBtn.clicked.connect(self.browse_comfy_main_path)
+        comfyMainLayout = QHBoxLayout()
+        comfyMainLayout.addWidget(self.comfyMainPathEdit)
+        comfyMainLayout.addWidget(self.comfyMainBrowseBtn)
+        layout.addRow("Comfy Main Path:", comfyMainLayout)
+
+        # Comfy Image Workflows with Browse Button
+        self.comfyImageWorkflowEdit = QLineEdit(self.settingsManager.get("comfy_image_workflows", ""))
+        self.comfyImageWorkflowBrowseBtn = QPushButton("Browse")
+        self.comfyImageWorkflowBrowseBtn.clicked.connect(self.browse_comfy_image_workflows)
+        comfyImageWorkflowLayout = QHBoxLayout()
+        comfyImageWorkflowLayout.addWidget(self.comfyImageWorkflowEdit)
+        comfyImageWorkflowLayout.addWidget(self.comfyImageWorkflowBrowseBtn)
+        layout.addRow("Comfy Image Workflows:", comfyImageWorkflowLayout)
+
+        # Comfy Video Workflows with Browse Button
+        self.comfyVideoWorkflowEdit = QLineEdit(self.settingsManager.get("comfy_video_workflows", ""))
+        self.comfyVideoWorkflowBrowseBtn = QPushButton("Browse")
+        self.comfyVideoWorkflowBrowseBtn.clicked.connect(self.browse_comfy_video_workflows)
+        comfyVideoWorkflowLayout = QHBoxLayout()
+        comfyVideoWorkflowLayout.addWidget(self.comfyVideoWorkflowEdit)
+        comfyVideoWorkflowLayout.addWidget(self.comfyVideoWorkflowBrowseBtn)
+        layout.addRow("Comfy Video Workflows:", comfyVideoWorkflowLayout)
+
+        # Buttons
         btnLayout = QHBoxLayout()
         okBtn = QPushButton("OK")
         cancelBtn = QPushButton("Cancel")
@@ -98,9 +137,65 @@ class SettingsDialog(QDialog):
         okBtn.clicked.connect(self.accept)
         cancelBtn.clicked.connect(self.reject)
 
+    def browse_comfy_py_path(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        if sys.platform.startswith('win'):
+            filter_str = "Python Executable (*.exe);;All Files (*)"
+        else:
+            filter_str = "Python Executable (*)"
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Comfy Python Executable",
+            self.comfyPyPathEdit.text(),
+            filter_str,
+            options=options
+        )
+        if file_path:
+            self.comfyPyPathEdit.setText(file_path)
+
+    def browse_comfy_main_path(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        if sys.platform.startswith('win'):
+            filter_str = "Executable Files (*.exe);;All Files (*)"
+        else:
+            filter_str = "Executable Files (*)"
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Comfy Main Executable",
+            self.comfyMainPathEdit.text(),
+            filter_str,
+            options=options
+        )
+        if file_path:
+            self.comfyMainPathEdit.setText(file_path)
+
+    def browse_comfy_image_workflows(self):
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Comfy Image Workflows Folder",
+            self.comfyImageWorkflowEdit.text(),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+        )
+        if directory:
+            self.comfyImageWorkflowEdit.setText(directory)
+
+    def browse_comfy_video_workflows(self):
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Comfy Video Workflows Folder",
+            self.comfyVideoWorkflowEdit.text(),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+        )
+        if directory:
+            self.comfyVideoWorkflowEdit.setText(directory)
+
     def accept(self):
         self.settingsManager.set("comfy_ip", self.comfyIpEdit.text().strip())
         self.settingsManager.set("comfy_py_path", self.comfyPyPathEdit.text().strip())
         self.settingsManager.set("comfy_main_path", self.comfyMainPathEdit.text().strip())
+        self.settingsManager.set("comfy_image_workflows", self.comfyImageWorkflowEdit.text().strip())
+        self.settingsManager.set("comfy_video_workflows", self.comfyVideoWorkflowEdit.text().strip())
         self.settingsManager.save()
         super().accept()

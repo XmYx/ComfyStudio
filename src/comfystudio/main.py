@@ -448,8 +448,10 @@ class MainWindow(QMainWindow, ShotManager):
 
     def loadWorkflows(self):
         base_dir = os.path.join(os.path.dirname(__file__), "workflows")
-        image_dir = os.path.join(base_dir, "image")
-        video_dir = os.path.join(base_dir, "video")
+        # image_dir = os.path.join(base_dir, "image")
+        image_dir = self.settingsManager.get("comfy_image_workflows", os.path.join(base_dir, "image"))
+        # video_dir = os.path.join(base_dir, "video")
+        video_dir = self.settingsManager.get("comfy_video_workflows", os.path.join(base_dir, "video"))
         self.image_workflows = []
         self.video_workflows = []
         if os.path.isdir(image_dir):
@@ -1329,6 +1331,13 @@ class MainWindow(QMainWindow, ShotManager):
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
 
     def onSelectionChanged(self):
+
+        try:
+            # Stop the current video before changing
+            self.player.stop()
+        except:
+            pass
+
         selected_items = self.listWidget.selectedItems()
         if len(selected_items) == 1:
             idx = selected_items[0].data(Qt.ItemDataRole.UserRole)
@@ -1337,10 +1346,10 @@ class MainWindow(QMainWindow, ShotManager):
                 self.fillDock()
             else:
                 self.currentShotIndex = None
-                self.clearDock()
+                # self.clearDock()
         else:
             self.currentShotIndex = None
-            self.clearDock()
+            # self.clearDock()
 
     def onGlobalParamChanged(self, param, newVal, isVideo):
         param["value"] = newVal
@@ -1439,8 +1448,8 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(qss)
     window = MainWindow()
-    sys.stdout = window.logStream
-    sys.stderr = window.logStream
+    # sys.stdout = window.logStream
+    # sys.stderr = window.logStream
     # window.setupLogging()
     window.show()
     sys.exit(app.exec())
