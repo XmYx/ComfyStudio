@@ -93,8 +93,8 @@ class ShotManager:
         self.statusMessage.setText("Ready")
 
     def getShotIcon(self, shot):
-        if shot.get("stillPath") and os.path.exists(shot["stillPath"]):
-            base_pix = QPixmap(shot["stillPath"])
+        if shot.get("stillPath") and os.path.exists(shot.get("stillPath")):
+            base_pix = QPixmap(shot.get("stillPath"))
             if not base_pix.isNull():
                 base_pix = base_pix.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             else:
@@ -126,7 +126,7 @@ class ShotManager:
     def getShotImageStatusColor(self, shot):
         if not shot.get("stillPath"):
             return QColor("red")
-        if not os.path.exists(shot["stillPath"]):
+        if not os.path.exists(shot.get("stillPath")):
             return QColor("red")
         current_sig = self.computeRenderSignature(shot, isVideo=False)
         last_sig = shot.get("lastStillSignature", "")
@@ -135,7 +135,7 @@ class ShotManager:
     def getShotVideoStatusColor(self, shot):
         if not shot.get("videoPath"):
             return QColor("red")
-        if not os.path.exists(shot["videoPath"]):
+        if not os.path.exists(shot.get("videoPath")):
             return QColor("red")
         current_sig = self.computeRenderSignature(shot, isVideo=True)
         last_sig = shot.get("lastVideoSignature", "")
