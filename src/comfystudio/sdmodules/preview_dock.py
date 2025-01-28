@@ -29,7 +29,7 @@ class ShotPreviewDock(QDockWidget):
     """
     def __init__(self, parent=None):
         super().__init__("Shot Preview", parent)
-        self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
 
         # Main widget inside the dock
         self.previewContainer = QWidget()

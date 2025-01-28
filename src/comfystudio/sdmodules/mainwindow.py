@@ -152,7 +152,7 @@ class MainWindow(QMainWindow, ShotManager):
         # Dock for shot parameters
         self.dock = QDockWidget(self.localization.translate("shot_details"), self)
         self.dock.setObjectName("shot_details_dock")
-        self.dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
 
         self.dockContents = QWidget()
@@ -627,7 +627,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Configure Terminal Dock
         self.terminalDock.setWindowTitle(self.localization.translate("terminal_output", default="Terminal Output"))
-        self.terminalDock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.terminalDock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.terminalTextEdit.setReadOnly(True)
         self.terminalDock.setWidget(self.terminalTextEdit)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.terminalDock)
