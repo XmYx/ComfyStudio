@@ -12,6 +12,7 @@ import urllib
 from typing import List, Dict
 
 import requests
+from PyQt6.QtWidgets import QToolButton
 from qtpy import QtCore
 from qtpy.QtGui import QCursor
 from qtpy.QtWidgets import (
@@ -200,10 +201,126 @@ class MainWindow(QMainWindow, ShotManager):
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
 
+    # def initWorkflowsTab(self):
+    #     layout = self.workflowsLayout
+    #
+    #     # Comboboxes for adding image/video workflows
+    #     comboLayout = QHBoxLayout()
+    #
+    #     # Image Workflow Section
+    #     self.imageWorkflowLabel = QLabel(self.localization.translate("label_image_workflow", default="Image Workflow:"))
+    #     self.imageWorkflowCombo = QComboBox()
+    #     self.imageWorkflowCombo.setToolTip(
+    #         self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
+    #     self.addImageWorkflowBtn = QPushButton(
+    #         self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
+    #     self.addImageWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_image_workflow",
+    #                                                                     default="Add the selected Image Workflow to the shot"))
+    #
+    #     # Connect Image Workflow Button
+    #     self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
+    #
+    #     # Video Workflow Section
+    #     self.videoWorkflowLabel = QLabel(self.localization.translate("label_video_workflow", default="Video Workflow:"))
+    #     self.videoWorkflowCombo = QComboBox()
+    #     self.videoWorkflowCombo.setToolTip(
+    #         self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
+    #     self.addVideoWorkflowBtn = QPushButton(
+    #         self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
+    #     self.addVideoWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_video_workflow",
+    #                                                                     default="Add the selected Video Workflow to the shot"))
+    #
+    #     # Connect Video Workflow Button
+    #     self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
+    #
+    #     # Assemble Combo Layout
+    #     comboLayout.addWidget(self.imageWorkflowLabel)
+    #     comboLayout.addWidget(self.imageWorkflowCombo)
+    #     comboLayout.addWidget(self.addImageWorkflowBtn)
+    #     comboLayout.addSpacing(20)  # Optional: Add spacing between sections
+    #     comboLayout.addWidget(self.videoWorkflowLabel)
+    #     comboLayout.addWidget(self.videoWorkflowCombo)
+    #     comboLayout.addWidget(self.addVideoWorkflowBtn)
+    #
+    #     layout.addLayout(comboLayout)
+    #
+    #     # Workflow List
+    #     self.workflowListLabel = QLabel(
+    #         self.localization.translate("label_workflow_list", default="Available Workflows:"))
+    #     layout.addWidget(self.workflowListLabel)
+    #
+    #     self.workflowListWidget = QListWidget()
+    #     self.workflowListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    #     self.workflowListWidget.itemClicked.connect(self.onWorkflowItemClicked)
+    #     self.workflowListWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    #     self.workflowListWidget.customContextMenuRequested.connect(self.onWorkflowListContextMenu)
+    #     layout.addWidget(self.workflowListWidget)
+    #
+    #     # Buttons to Remove Workflows
+    #     buttonsLayout = QHBoxLayout()
+    #     self.removeWorkflowBtn = QPushButton(
+    #         self.localization.translate("button_remove_workflow", default="Remove Workflow"))
+    #     self.removeWorkflowBtn.setToolTip(self.localization.translate("tooltip_remove_workflow",
+    #                                                                   default="Remove the selected Workflow from the shot"))
+    #     buttonsLayout.addWidget(self.removeWorkflowBtn)
+    #     layout.addLayout(buttonsLayout)
+    #
+    #     # Connect Remove Workflow Button
+    #     self.removeWorkflowBtn.clicked.connect(self.removeWorkflowFromShot)
+    #
+    #     # Toggle Hidden Parameters
+    #     self.toggleHiddenParamsBtn = QPushButton(
+    #         self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
+    #     self.toggleHiddenParamsBtn.setToolTip(self.localization.translate("tooltip_toggle_hidden_params",
+    #                                                                       default="Toggle the visibility of hidden parameters"))
+    #     self.toggleHiddenParamsBtn.clicked.connect(self.toggleHiddenParams)
+    #     layout.addWidget(self.toggleHiddenParamsBtn)
+    #
+    #     # Parameters Area in a Scroll
+    #     self.workflowParamsGroup = QGroupBox(
+    #         self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
+    #     self.workflowParamsLayout = QFormLayout(self.workflowParamsGroup)
+    #     self.workflowParamsGroup.setLayout(self.workflowParamsLayout)
+    #     self.workflowParamsGroup.setEnabled(False)
+    #
+    #     self.workflowParamsScroll = QScrollArea()
+    #     self.workflowParamsScroll.setWidgetResizable(True)
+    #     self.workflowParamsScroll.setWidget(self.workflowParamsGroup)
+    #
+    #     layout.addWidget(self.workflowParamsScroll)
     def initWorkflowsTab(self):
+        """
+        Makes the entire workflow selection portion collapsible within a group,
+        but expanded by default.
+        """
         layout = self.workflowsLayout
 
-        # Comboboxes for adding image/video workflows
+        # -- 1) Collapsible group box to hold workflow selection (expanded by default) --
+        self.workflowGroupBox = QGroupBox(
+            self.localization.translate("workflow_selection", default="Workflow Selection"))
+        self.workflowGroupBox.setCheckable(True)
+        self.workflowGroupBox.setChecked(True)  # Not collapsed by default
+        groupLayout = QVBoxLayout(self.workflowGroupBox)
+        self.workflowGroupBox.setLayout(groupLayout)
+
+        def onWorkflowsToggled(checked):
+            """
+            When unchecked, disable/hide all children; when checked, enable/show them.
+            QGroupBox 'checkable' doesn't literally collapse the widget;
+            instead it enables/disables its children.
+            If you want them hidden, you can manually hide/show.
+            """
+            # Here we just rely on enabling/disabling (the default QGroupBox behavior).
+            # If you prefer to visually hide them, comment out the enabling code
+            # and show/hide instead.
+            for w in self.workflowGroupBox.children():
+                if w is not groupLayout:  # skip the layout
+                    w.setEnabled(checked)
+                    w.setVisible(not w.isVisible())
+
+        self.workflowGroupBox.toggled.connect(onWorkflowsToggled)
+
+        # -- 2) Comboboxes for adding image/video workflows --
         comboLayout = QHBoxLayout()
 
         # Image Workflow Section
@@ -213,11 +330,15 @@ class MainWindow(QMainWindow, ShotManager):
             self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
         self.addImageWorkflowBtn = QPushButton(
             self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
-        self.addImageWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_image_workflow",
-                                                                        default="Add the selected Image Workflow to the shot"))
-
-        # Connect Image Workflow Button
+        self.addImageWorkflowBtn.setToolTip(
+            self.localization.translate("tooltip_add_image_workflow",
+                                        default="Add the selected Image Workflow to the shot"))
         self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
+
+        comboLayout.addWidget(self.imageWorkflowLabel)
+        comboLayout.addWidget(self.imageWorkflowCombo)
+        comboLayout.addWidget(self.addImageWorkflowBtn)
+        comboLayout.addSpacing(20)  # Optional spacing
 
         # Video Workflow Section
         self.videoWorkflowLabel = QLabel(self.localization.translate("label_video_workflow", default="Video Workflow:"))
@@ -226,56 +347,54 @@ class MainWindow(QMainWindow, ShotManager):
             self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
         self.addVideoWorkflowBtn = QPushButton(
             self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
-        self.addVideoWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_video_workflow",
-                                                                        default="Add the selected Video Workflow to the shot"))
-
-        # Connect Video Workflow Button
+        self.addVideoWorkflowBtn.setToolTip(
+            self.localization.translate("tooltip_add_video_workflow",
+                                        default="Add the selected Video Workflow to the shot"))
         self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
 
-        # Assemble Combo Layout
-        comboLayout.addWidget(self.imageWorkflowLabel)
-        comboLayout.addWidget(self.imageWorkflowCombo)
-        comboLayout.addWidget(self.addImageWorkflowBtn)
-        comboLayout.addSpacing(20)  # Optional: Add spacing between sections
         comboLayout.addWidget(self.videoWorkflowLabel)
         comboLayout.addWidget(self.videoWorkflowCombo)
         comboLayout.addWidget(self.addVideoWorkflowBtn)
 
-        layout.addLayout(comboLayout)
+        groupLayout.addLayout(comboLayout)
 
-        # Workflow List
+        # -- 3) Workflow List and label --
         self.workflowListLabel = QLabel(
             self.localization.translate("label_workflow_list", default="Available Workflows:"))
-        layout.addWidget(self.workflowListLabel)
+        groupLayout.addWidget(self.workflowListLabel)
 
         self.workflowListWidget = QListWidget()
         self.workflowListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.workflowListWidget.itemClicked.connect(self.onWorkflowItemClicked)
         self.workflowListWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.workflowListWidget.customContextMenuRequested.connect(self.onWorkflowListContextMenu)
-        layout.addWidget(self.workflowListWidget)
+        groupLayout.addWidget(self.workflowListWidget)
 
-        # Buttons to Remove Workflows
+        # -- 4) Buttons (Remove Workflow, etc.) --
         buttonsLayout = QHBoxLayout()
         self.removeWorkflowBtn = QPushButton(
             self.localization.translate("button_remove_workflow", default="Remove Workflow"))
-        self.removeWorkflowBtn.setToolTip(self.localization.translate("tooltip_remove_workflow",
-                                                                      default="Remove the selected Workflow from the shot"))
-        buttonsLayout.addWidget(self.removeWorkflowBtn)
-        layout.addLayout(buttonsLayout)
-
-        # Connect Remove Workflow Button
+        self.removeWorkflowBtn.setToolTip(
+            self.localization.translate("tooltip_remove_workflow",
+                                        default="Remove the selected Workflow from the shot"))
         self.removeWorkflowBtn.clicked.connect(self.removeWorkflowFromShot)
+        buttonsLayout.addWidget(self.removeWorkflowBtn)
+
+        groupLayout.addLayout(buttonsLayout)
 
         # Toggle Hidden Parameters
         self.toggleHiddenParamsBtn = QPushButton(
             self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
-        self.toggleHiddenParamsBtn.setToolTip(self.localization.translate("tooltip_toggle_hidden_params",
-                                                                          default="Toggle the visibility of hidden parameters"))
+        self.toggleHiddenParamsBtn.setToolTip(
+            self.localization.translate("tooltip_toggle_hidden_params",
+                                        default="Toggle the visibility of hidden parameters"))
         self.toggleHiddenParamsBtn.clicked.connect(self.toggleHiddenParams)
-        layout.addWidget(self.toggleHiddenParamsBtn)
+        groupLayout.addWidget(self.toggleHiddenParamsBtn)
 
-        # Parameters Area in a Scroll
+        # Finally, add the group box to the main workflows layout
+        layout.addWidget(self.workflowGroupBox)
+
+        # -- 5) Parameters area (always visible) --
         self.workflowParamsGroup = QGroupBox(
             self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
         self.workflowParamsLayout = QFormLayout(self.workflowParamsGroup)
@@ -288,6 +407,16 @@ class MainWindow(QMainWindow, ShotManager):
 
         layout.addWidget(self.workflowParamsScroll)
 
+    def onWorkflowGroupToggled(self, expanded: bool):
+        """
+        Slot called when the QGroupBox (workflowGroup) is toggled.
+        If expanded is False, we hide the internal widgets; if True, show them.
+        """
+        # When a checkable QGroupBox is unchecked, it usually disables its contents
+        # but doesn't fully hide/collapse them. We can manually hide or show them here if desired:
+        for w in (self.workflowListLabel, self.workflowListWidget,
+                  self.removeWorkflowBtn, self.toggleHiddenParamsBtn):
+            w.setVisible(expanded)
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)
         if not item:
