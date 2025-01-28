@@ -3,6 +3,7 @@ import json
 import os
 import sys
 
+from PyQt6.QtWidgets import QComboBox
 from qtpy.QtCore import (
     QStandardPaths
 )
@@ -64,6 +65,8 @@ class SettingsManager:
                         self.data.update(json.load(df))
             if "workflow_params" not in self.data:
                 self.data["workflow_params"] = {}
+            if "language" not in self.data:
+                self.data["language"] = "en"
         except Exception as e:
             print(f"Error loading configuration: {e}")
 
@@ -80,11 +83,123 @@ class SettingsManager:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settingsManager, parent=None):
+    def __init__(self, settingsManager, localization_manager, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
         self.settingsManager = settingsManager
+        self.localization = localization_manager
+        self.setWindowTitle("Settings")
+
         layout = QFormLayout(self)
+
+        # Language Selection
+        lang_layout = QHBoxLayout()
+        lang_label = QLabel(self.localization.translate("label_language", default="Language:"))
+        self.lang_combo = QComboBox()
+
+        # self.languages = [
+        #     ("Afrikaans", "af"),  # Afrikaans
+        #     ("العربية", "ar"),  # Arabic
+        #     ("বাংলা", "bn"),  # Bengali
+        #     ("简体中文", "cn"),  # Chinese Simplified
+        #     ("繁體中文", "ct"),  # Chinese Traditional
+        #     ("Deutsch", "de"),
+        #     ("English", "en"),
+        #     ("Español", "es"),
+        #     ("Français", "fr"),
+        #     ("Frysk", "fy"),  # Frieslandic (West Frisian)
+        #     ("עברית", "he"),
+        #     ("हिन्दी", "hi"),  # Hindi
+        #     ("Italiano", "it"),  # Italian
+        #     ("Íslenska", "is"),  # Icelandic
+        #     ("Japanese", "jp"),
+        #     ("한국어", "ko"), # Korean
+        #     ("Magyar", "hu"),
+        #     ("Nederlands", "nl"),  # Dutch
+        #     ("Português", "pt"),  # Portuguese
+        #     ("Svenska", "sv"),
+        #     ("Українська", "ur"),  # Ukrainian
+        #     ("Русский", "ru"),  # Russian
+        #     ("தமிழ்", "ta"),  # Tamil
+        # ]
+
+        self.languages = [
+            ("Afrikaans", "af"),  # Afrikaans
+            ("العربية", "ar"),  # Arabic
+            ("বাংলা", "bn"),  # Bengali
+            ("简体中文", "cn"),  # Chinese Simplified (Mandarin)
+            ("繁體中文", "ct"),  # Chinese Traditional (Mandarin)
+            # ("Cantonese", "yue"),  # Cantonese (New)
+            ("Deutsch", "de"),  # German
+            ("English", "en"),  # English
+            ("Español", "es"),  # Spanish
+            ("Français", "fr"),  # French
+            ("Frysk", "fy"),  # Frieslandic (West Frisian)
+            ("עברית", "he"),  # Hebrew
+            ("हिन्दी", "hi"),  # Hindi
+            # ("मराठी", "mr"),  # Marathi (New)
+            # ("ગુજરાતી", "gu"),  # Gujarati (New)
+            # ("ਪੰਜਾਬੀ", "pa"),  # Punjabi (New)
+            # ("Bhojpuri", "bho"),  # Bhojpuri (New)
+            ("Italiano", "it"),  # Italian
+            ("Íslenska", "is"),  # Icelandic
+            ("日本語", "jp"),  # Japanese
+            ("한국어", "ko"),  # Korean
+            ("Magyar", "hu"),  # Hungarian
+            ("Nederlands", "nl"),  # Dutch
+            ("Português", "pt"),  # Portuguese
+            ("Svenska", "sv"),  # Swedish
+            ("Українська", "ur"),  # Ukrainian
+            ("Русский", "ru"),  # Russian
+            ("தமிழ்", "ta"),  # Tamil
+            ("తెలుగు", "te"),  # Telugu
+            # ("മലയാളം", "ml"),  # Malayalam (New)
+            # ("සිංහල", "si"),  # Sinhala (New)
+            ("فارسی", "fa"),  # Persian (Farsi)
+            ("Türkçe", "tr"),  # Turkish
+            ("Polski", "pl"),  # Polish
+            ("Čeština", "cs"),  # Czech
+            ("Ελληνικά", "el"),  # Greek
+            ("Suomi", "fi"),  # Finnish
+            ("Dansk", "da"),  # Danish
+            ("Norsk", "no"),  # Norwegian
+            ("Kiswahili", "sw"),  # Swahili
+            ("ไทย", "th"),  # Thai
+            ("Tiếng Việt", "vi"),  # Vietnamese
+            ("Bahasa Melayu", "ms"),  # Malay
+            ("Tagalog", "tl"),  # Tagalog (Filipino)
+            ("Euskara", "eu"),  # Basque
+            ("Cymraeg", "cy"),  # Welsh
+            ("Gaeilge", "ga"),  # Irish Gaelic
+            ("Gàidhlig", "gd"),  # Scottish Gaelic
+            ("Hausa", "ha"),  # Hausa
+            ("Yorùbá", "yo"),  # Yoruba
+            ("IsiZulu", "zu"),  # Zulu
+            # ("Burmese", "my"),  # Burmese (New)
+            # ("Javanese", "jv"),  # Javanese (New)
+            # ("Sundanese", "su"),  # Sundanese (New)
+            # ("Amharic", "am"),  # Amharic (New)
+            # ("Igbo", "ig"),  # Igbo (New)
+            # ("Twi", "tw"),  # Twi (New)
+            # ("Pashto", "ps"),  # Pashto (New)
+            # ("Uzbek", "uz"),  # Uzbek (New)
+            # ("Mongolian", "mn"),  # Mongolian (New)
+            # ("Serbian", "sr"),  # Serbian (New)
+            # ("Croatian", "hr"),  # Croatian (New)
+            # ("Slovak", "sk"),  # Slovak (New)
+            # ("Slovenian", "sl"),  # Slovenian (New)
+            # ("Māori", "mi"),  # Māori (New)
+            # ("Sami", "se"),  # Sami (New)
+            # ("Tatar", "tt")  # Tatar (New)
+        ]
+
+        for name, code in self.languages:
+            self.lang_combo.addItem(name, code)
+        current_lang = self.settingsManager.get("language", "en")
+        index = self.lang_combo.findData(current_lang)
+        if index != -1:
+            self.lang_combo.setCurrentIndex(index)
+        lang_layout.addWidget(self.lang_combo)
+        layout.addRow(lang_label, lang_layout)
 
         # Comfy IP
         self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
@@ -192,10 +307,12 @@ class SettingsDialog(QDialog):
             self.comfyVideoWorkflowEdit.setText(directory)
 
     def accept(self):
+        selected_lang_code = self.lang_combo.currentData()
         self.settingsManager.set("comfy_ip", self.comfyIpEdit.text().strip())
         self.settingsManager.set("comfy_py_path", self.comfyPyPathEdit.text().strip())
         self.settingsManager.set("comfy_main_path", self.comfyMainPathEdit.text().strip())
         self.settingsManager.set("comfy_image_workflows", self.comfyImageWorkflowEdit.text().strip())
         self.settingsManager.set("comfy_video_workflows", self.comfyVideoWorkflowEdit.text().strip())
+        self.settingsManager.set("language", selected_lang_code)
         self.settingsManager.save()
         super().accept()

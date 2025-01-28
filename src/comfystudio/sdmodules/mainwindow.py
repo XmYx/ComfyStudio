@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QScrollArea,
     QInputDialog,
-    QMenu, QFrame
+    QMenu, QFrame, QApplication
 )
 from qtpy.QtCore import (
     Qt,
@@ -55,6 +55,7 @@ from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
 from qtpy.QtMultimediaWidgets import QVideoWidget
 
 from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
+from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
@@ -93,10 +94,13 @@ class MainWindow(QMainWindow, ShotManager):
     def __init__(self):
         QMainWindow.__init__(self)
         ShotManager.__init__(self)
-        self.setWindowTitle("Cinema Shot Designer")
         self.resize(1400, 900)
 
         self.settingsManager = SettingsManager()
+        self.localization = LocalizationManager(self.settingsManager)
+
+        self.setWindowTitle(self.localization.translate("app_title", default="Cinema Shot Designer"))
+
         self.shots: List[Shot] = []
         self.currentShotIndex: int = -1
 
@@ -136,6 +140,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Shots list
         self.listWidgetBase = ReorderableListWidget(self)
+        self.listWidgetBase.updateTexts()
         self.listWidget = self.listWidgetBase.listWidget
         self.listWidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listWidget.itemClicked.connect(self.onItemClicked)
@@ -145,7 +150,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.mainLayout.addWidget(self.listWidgetBase)
 
         # Dock for shot parameters
-        self.dock = QDockWidget("Shot Details", self)
+        self.dock = QDockWidget(self.localization.translate("shot_details"), self)
         self.dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
 
@@ -162,8 +167,8 @@ class MainWindow(QMainWindow, ShotManager):
         self.paramsTab = QWidget()
         self.paramsLayout = QVBoxLayout(self.paramsTab)  # We'll place a scroll area inside
 
-        self.dockTabWidget.addTab(self.workflowsTab, "Workflows")
-        self.dockTabWidget.addTab(self.paramsTab, "Params")
+        self.dockTabWidget.addTab(self.workflowsTab, self.localization.translate("workflows"))
+        self.dockTabWidget.addTab(self.paramsTab, self.localization.translate("params"))
 
         # Workflow management UI
         self.initWorkflowsTab()
@@ -194,34 +199,54 @@ class MainWindow(QMainWindow, ShotManager):
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
 
-
     def initWorkflowsTab(self):
         layout = self.workflowsLayout
 
         # Comboboxes for adding image/video workflows
         comboLayout = QHBoxLayout()
+
+        # Image Workflow Section
+        self.imageWorkflowLabel = QLabel(self.localization.translate("label_image_workflow", default="Image Workflow:"))
         self.imageWorkflowCombo = QComboBox()
+        self.imageWorkflowCombo.setToolTip(
+            self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
+        self.addImageWorkflowBtn = QPushButton(
+            self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
+        self.addImageWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_image_workflow",
+                                                                        default="Add the selected Image Workflow to the shot"))
+
+        # Connect Image Workflow Button
+        self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
+
+        # Video Workflow Section
+        self.videoWorkflowLabel = QLabel(self.localization.translate("label_video_workflow", default="Video Workflow:"))
         self.videoWorkflowCombo = QComboBox()
+        self.videoWorkflowCombo.setToolTip(
+            self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
+        self.addVideoWorkflowBtn = QPushButton(
+            self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
+        self.addVideoWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_video_workflow",
+                                                                        default="Add the selected Video Workflow to the shot"))
 
-        self.imageWorkflowCombo.setToolTip("Select an Image Workflow to add")
-        self.videoWorkflowCombo.setToolTip("Select a Video Workflow to add")
+        # Connect Video Workflow Button
+        self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
 
-        self.addImageWorkflowBtn = QPushButton("Add Image Workflow")
-        self.addVideoWorkflowBtn = QPushButton("Add Video Workflow")
-
-        comboLayout.addWidget(QLabel("Image Workflow:"))
+        # Assemble Combo Layout
+        comboLayout.addWidget(self.imageWorkflowLabel)
         comboLayout.addWidget(self.imageWorkflowCombo)
         comboLayout.addWidget(self.addImageWorkflowBtn)
-        comboLayout.addWidget(QLabel("Video Workflow:"))
+        comboLayout.addSpacing(20)  # Optional: Add spacing between sections
+        comboLayout.addWidget(self.videoWorkflowLabel)
         comboLayout.addWidget(self.videoWorkflowCombo)
         comboLayout.addWidget(self.addVideoWorkflowBtn)
 
         layout.addLayout(comboLayout)
 
-        self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
-        self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
+        # Workflow List
+        self.workflowListLabel = QLabel(
+            self.localization.translate("label_workflow_list", default="Available Workflows:"))
+        layout.addWidget(self.workflowListLabel)
 
-        # Workflow list
         self.workflowListWidget = QListWidget()
         self.workflowListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.workflowListWidget.itemClicked.connect(self.onWorkflowItemClicked)
@@ -229,21 +254,29 @@ class MainWindow(QMainWindow, ShotManager):
         self.workflowListWidget.customContextMenuRequested.connect(self.onWorkflowListContextMenu)
         layout.addWidget(self.workflowListWidget)
 
-        # Buttons to remove workflows
+        # Buttons to Remove Workflows
         buttonsLayout = QHBoxLayout()
-        self.removeWorkflowBtn = QPushButton("Remove Workflow")
+        self.removeWorkflowBtn = QPushButton(
+            self.localization.translate("button_remove_workflow", default="Remove Workflow"))
+        self.removeWorkflowBtn.setToolTip(self.localization.translate("tooltip_remove_workflow",
+                                                                      default="Remove the selected Workflow from the shot"))
         buttonsLayout.addWidget(self.removeWorkflowBtn)
         layout.addLayout(buttonsLayout)
 
+        # Connect Remove Workflow Button
         self.removeWorkflowBtn.clicked.connect(self.removeWorkflowFromShot)
 
-        # Toggle hidden params
-        self.toggleHiddenParamsBtn = QPushButton("Show/Hide Hidden Params")
+        # Toggle Hidden Parameters
+        self.toggleHiddenParamsBtn = QPushButton(
+            self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
+        self.toggleHiddenParamsBtn.setToolTip(self.localization.translate("tooltip_toggle_hidden_params",
+                                                                          default="Toggle the visibility of hidden parameters"))
         self.toggleHiddenParamsBtn.clicked.connect(self.toggleHiddenParams)
         layout.addWidget(self.toggleHiddenParamsBtn)
 
-        # Parameters area in a scroll
-        self.workflowParamsGroup = QGroupBox("Workflow Parameters")
+        # Parameters Area in a Scroll
+        self.workflowParamsGroup = QGroupBox(
+            self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
         self.workflowParamsLayout = QFormLayout(self.workflowParamsGroup)
         self.workflowParamsGroup.setLayout(self.workflowParamsLayout)
         self.workflowParamsGroup.setEnabled(False)
@@ -348,94 +381,201 @@ class MainWindow(QMainWindow, ShotManager):
                     pass
 
     def createMenuBar(self):
-        menuBar = QMenuBar(self)
+        # Clear existing menu bar to prevent duplication
+        self.menuBar().clear()
 
-        fileMenu = QMenu("File", self)
-        newAct = QAction("New Project", self)
-        openAct = QAction("Open", self)
-        saveAct = QAction("Save", self)
-        saveAsAct = QAction("Save As", self)
+        # Initialize Menus
+        self.fileMenu = QMenu(self)
+        self.settingsMenu = QMenu(self)
 
-        newAct.triggered.connect(self.newProject)
-        openAct.triggered.connect(self.openProject)
-        saveAct.triggered.connect(self.saveProject)
-        saveAsAct.triggered.connect(self.saveProjectAs)
+        # Initialize Actions
+        self.newAct = QAction(self)
+        self.openAct = QAction(self)
+        self.saveAct = QAction(self)
+        self.saveAsAct = QAction(self)
+        self.importAction = QAction(self)
+        self.renderSelectedAct = QAction(self)
+        self.renderAllAct = QAction(self)
+        self.saveDefaultsAct = QAction(self)
+        self.openSettingsAct = QAction(self)
 
-        fileMenu.addAction(newAct)
-        fileMenu.addAction(openAct)
-        fileMenu.addAction(saveAct)
-        fileMenu.addAction(saveAsAct)
+        # Set initial texts
+        self.updateMenuBarTexts()
 
-        importAction = QAction("Import Shots from TXT", self)
-        importAction.triggered.connect(self.importShotsFromTxt)
-        fileMenu.addAction(importAction)
+        # Connect actions
+        self.newAct.triggered.connect(self.newProject)
+        self.openAct.triggered.connect(self.openProject)
+        self.saveAct.triggered.connect(self.saveProject)
+        self.saveAsAct.triggered.connect(self.saveProjectAs)
+        self.importAction.triggered.connect(self.importShotsFromTxt)
+        self.renderSelectedAct.triggered.connect(self.onRenderSelected)
+        self.renderAllAct.triggered.connect(self.onRenderAll)
+        self.saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
+        self.openSettingsAct.triggered.connect(self.showSettingsDialog)
 
-        # Instead of "Render All Stills" and "Render All Videos", we do "Render Selected" and "Render All"
-        renderSelectedAct = QAction("Render Selected", self)
-        renderAllAct = QAction("Render All", self)
-        renderSelectedAct.triggered.connect(self.onRenderSelected)
-        renderAllAct.triggered.connect(self.onRenderAll)
-        fileMenu.addAction(renderSelectedAct)
-        fileMenu.addAction(renderAllAct)
+        # Add actions to File Menu
+        self.fileMenu.addAction(self.newAct)
+        self.fileMenu.addAction(self.openAct)
+        self.fileMenu.addAction(self.saveAct)
+        self.fileMenu.addAction(self.saveAsAct)
+        self.fileMenu.addAction(self.importAction)
+        self.fileMenu.addSeparator()
+        self.fileMenu.addAction(self.renderSelectedAct)
+        self.fileMenu.addAction(self.renderAllAct)
+        self.fileMenu.addAction(self.saveDefaultsAct)
 
-        saveDefaultsAct = QAction("Save Workflow Defaults", self)
-        saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
-        fileMenu.addAction(saveDefaultsAct)
+        # Add actions to Settings Menu
+        self.settingsMenu.addAction(self.openSettingsAct)
 
-        settingsMenu = QMenu("Settings", self)
-        openSettingsAct = QAction("Open Settings", self)
-        openSettingsAct.triggered.connect(self.showSettingsDialog)
-        settingsMenu.addAction(openSettingsAct)
-
-        menuBar.addMenu(fileMenu)
-        menuBar.addMenu(settingsMenu)
-        self.setMenuBar(menuBar)
+        # Add Menus to Menu Bar
+        self.menuBar().addMenu(self.fileMenu)
+        self.menuBar().addMenu(self.settingsMenu)
 
     def createToolBar(self):
-        toolbar = self.addToolBar("Main Toolbar")
+        # Clear existing toolbar to prevent duplication
+        # self.toolBar().clear()
 
-        # We removed the old "Render All Stills" and "Render All Videos"
-        renderSelectedBtn = QAction("Render Selected", self)
-        renderAllBtn = QAction("Render All", self)
-        stopRenderingBtn = QAction("Stop Rendering", self)
-        addShotBtn = QAction("Add New Shot", self)
+        # Initialize Toolbar
+        self.toolbar = self.addToolBar("Main Toolbar")
 
-        toolbar.addAction(addShotBtn)
-        toolbar.addAction(renderSelectedBtn)
-        toolbar.addAction(renderAllBtn)
-        toolbar.addAction(stopRenderingBtn)
+        # Initialize Actions
+        self.addShotBtn = QAction(self)
+        self.renderSelectedBtn = QAction(self)
+        self.renderAllBtn = QAction(self)
+        self.stopRenderingBtn = QAction(self)
+        self.startComfyBtn = QAction(self)
+        self.stopComfyBtn = QAction(self)
 
-        self.startComfyBtn = QAction("Start Comfy", self)
-        self.stopComfyBtn = QAction("Stop Comfy", self)
-        toolbar.addAction(self.startComfyBtn)
-        toolbar.addAction(self.stopComfyBtn)
+        # Set initial texts
+        self.updateToolBarTexts()
 
-        addShotBtn.triggered.connect(self.addShot)
-        renderSelectedBtn.triggered.connect(self.onRenderSelected)
-        renderAllBtn.triggered.connect(self.onRenderAll)
-        stopRenderingBtn.triggered.connect(self.stopRendering)
+        # Connect actions
+        self.addShotBtn.triggered.connect(self.addShot)
+        self.renderSelectedBtn.triggered.connect(self.onRenderSelected)
+        self.renderAllBtn.triggered.connect(self.onRenderAll)
+        self.stopRenderingBtn.triggered.connect(self.stopRendering)
         self.startComfyBtn.triggered.connect(self.startComfy)
         self.stopComfyBtn.triggered.connect(self.stopComfy)
 
+        # Add actions to toolbar
+        self.toolbar.addAction(self.addShotBtn)
+        self.toolbar.addAction(self.renderSelectedBtn)
+        self.toolbar.addAction(self.renderAllBtn)
+        self.toolbar.addAction(self.stopRenderingBtn)
+        self.toolbar.addAction(self.startComfyBtn)
+        self.toolbar.addAction(self.stopComfyBtn)
+
     def createStatusBar(self):
+        # Clear existing status bar to prevent duplication
         self.status = self.statusBar()
-        self.statusMessage = QLabel("Ready")
+        self.status.clearMessage()
+
+        # Initialize Widgets
+        self.statusMessage = QLabel()
+        self.logLabel = QLabel()
+        self.terminalButton = QPushButton()
+        self.terminalDock = QDockWidget()
+        self.terminalTextEdit = QTextEdit()
+
+        # Set initial texts
+        self.updateStatusBarTexts()
+
+        # Configure Widgets
+        self.statusMessage.setText(self.localization.translate("status_ready", default="Ready"))
+        self.logLabel.setText("")
+        self.terminalButton.setText(self.localization.translate("button_terminal", default="Terminal"))
+
+        # Add Widgets to Status Bar
         self.status.addPermanentWidget(self.statusMessage, 1)
-
-        self.logLabel = QLabel("")
         self.status.addPermanentWidget(self.logLabel)
-
-        self.terminalButton = QPushButton("Terminal")
         self.status.addPermanentWidget(self.terminalButton)
+
+        # Connect Signals
         self.terminalButton.clicked.connect(self.toggleTerminalDock)
 
-        self.terminalDock = QDockWidget("Terminal Output", self)
+        # Configure Terminal Dock
+        self.terminalDock.setWindowTitle(self.localization.translate("terminal_output", default="Terminal Output"))
         self.terminalDock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
-        self.terminalTextEdit = QTextEdit()
         self.terminalTextEdit.setReadOnly(True)
         self.terminalDock.setWidget(self.terminalTextEdit)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.terminalDock)
         self.terminalDock.hide()
+
+    def updateMenuBarTexts(self):
+        # Update File Menu Title
+        self.fileMenu.setTitle(self.localization.translate("menu_file", default="File"))
+
+        # Update Settings Menu Title
+        self.settingsMenu.setTitle(self.localization.translate("menu_settings", default="Settings"))
+
+        # Update Actions Texts
+        self.newAct.setText(self.localization.translate("menu_new_project", default="New Project"))
+        self.openAct.setText(self.localization.translate("menu_open", default="Open"))
+        self.saveAct.setText(self.localization.translate("menu_save", default="Save"))
+        self.saveAsAct.setText(self.localization.translate("menu_save_as", default="Save As"))
+        self.importAction.setText(self.localization.translate("menu_import_shots", default="Import Shots from TXT"))
+        self.renderSelectedAct.setText(self.localization.translate("menu_render_selected", default="Render Selected"))
+        self.renderAllAct.setText(self.localization.translate("menu_render_all", default="Render All"))
+        self.saveDefaultsAct.setText(
+            self.localization.translate("menu_save_defaults", default="Save Workflow Defaults"))
+        self.openSettingsAct.setText(self.localization.translate("menu_open_settings", default="Open Settings"))
+
+    def updateToolBarTexts(self):
+        # Update Toolbar Name if needed (optional)
+        # self.toolbar.setWindowTitle(self.localization.translate("toolbar_name", default="Main Toolbar"))
+
+        # Update Actions Texts
+        self.addShotBtn.setText(self.localization.translate("toolbar_add_shot", default="Add New Shot"))
+        self.renderSelectedBtn.setText(self.localization.translate("menu_render_selected", default="Render Selected"))
+        self.renderAllBtn.setText(self.localization.translate("menu_render_all", default="Render All"))
+        self.stopRenderingBtn.setText(self.localization.translate("menu_render_stop", default="Stop Rendering"))
+        self.startComfyBtn.setText(self.localization.translate("toolbar_start_comfy", default="Start Comfy"))
+        self.stopComfyBtn.setText(self.localization.translate("toolbar_stop_comfy", default="Stop Comfy"))
+
+    def updateStatusBarTexts(self):
+        self.statusMessage.setText(self.localization.translate("status_ready", default="Ready"))
+        self.terminalButton.setText(self.localization.translate("button_terminal", default="Terminal"))
+        self.terminalButton.setToolTip(self.localization.translate("tooltip_terminal", default="Show/Hide Terminal"))
+        self.terminalDock.setWindowTitle(self.localization.translate("terminal_output", default="Terminal Output"))
+
+    def updateWorkflowsTabTexts(self):
+        """
+        Update all translatable texts in the Workflows Tab.
+        Call this method within retranslateUi to refresh UI elements with the new language.
+        """
+        # Update Labels
+        self.imageWorkflowLabel.setText(self.localization.translate("label_image_workflow", default="Image Workflow:"))
+        self.videoWorkflowLabel.setText(self.localization.translate("label_video_workflow", default="Video Workflow:"))
+        self.workflowListLabel.setText(
+            self.localization.translate("label_workflow_list", default="Available Workflows:"))
+        self.workflowParamsGroup.setTitle(
+            self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
+
+        # Update Buttons
+        self.addImageWorkflowBtn.setText(
+            self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
+        self.addImageWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_image_workflow",
+                                                                        default="Add the selected Image Workflow to the shot"))
+
+        self.addVideoWorkflowBtn.setText(
+            self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
+        self.addVideoWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_video_workflow",
+                                                                        default="Add the selected Video Workflow to the shot"))
+
+        self.removeWorkflowBtn.setText(self.localization.translate("button_remove_workflow", default="Remove Workflow"))
+        self.removeWorkflowBtn.setToolTip(self.localization.translate("tooltip_remove_workflow",
+                                                                      default="Remove the selected Workflow from the shot"))
+
+        self.toggleHiddenParamsBtn.setText(
+            self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
+        self.toggleHiddenParamsBtn.setToolTip(self.localization.translate("tooltip_toggle_hidden_params",
+                                                                          default="Toggle the visibility of hidden parameters"))
+
+        # Update Combobox Tooltips
+        self.imageWorkflowCombo.setToolTip(
+            self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
+        self.videoWorkflowCombo.setToolTip(
+            self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
 
     def appendLog(self, text):
         self.terminalTextEdit.append(text)
@@ -714,30 +854,31 @@ class MainWindow(QMainWindow, ShotManager):
 
     def refreshWorkflowsList(self, shot):
         self.workflowListWidget.clear()
-        for workflow in shot.workflows:
-            rowWidget = QWidget()
-            rowLayout = QHBoxLayout(rowWidget)
-            rowLayout.setContentsMargins(0, 0, 0, 0)
+        if shot:
+            for workflow in shot.workflows:
+                rowWidget = QWidget()
+                rowLayout = QHBoxLayout(rowWidget)
+                rowLayout.setContentsMargins(0, 0, 0, 0)
 
-            enableCheck = QCheckBox("Enabled")
-            enableCheck.setChecked(workflow.enabled)
-            enableCheck.setProperty("workflow", workflow)
-            enableCheck.stateChanged.connect(self.onWorkflowEnabledChanged)
-            rowLayout.addWidget(enableCheck)
+                enableCheck = QCheckBox("Enabled")
+                enableCheck.setChecked(workflow.enabled)
+                enableCheck.setProperty("workflow", workflow)
+                enableCheck.stateChanged.connect(self.onWorkflowEnabledChanged)
+                rowLayout.addWidget(enableCheck)
 
-            label = QLabel(os.path.basename(workflow.path))
-            rowLayout.addWidget(label)
+                label = QLabel(os.path.basename(workflow.path))
+                rowLayout.addWidget(label)
 
-            visualizeBtn = QPushButton("Visualize")
-            visualizeBtn.setProperty("workflow", workflow)
-            visualizeBtn.clicked.connect(self.onVisualizeWorkflow)
-            rowLayout.addWidget(visualizeBtn)
+                visualizeBtn = QPushButton("Visualize")
+                visualizeBtn.setProperty("workflow", workflow)
+                visualizeBtn.clicked.connect(self.onVisualizeWorkflow)
+                rowLayout.addWidget(visualizeBtn)
 
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, workflow)
-            item.setSizeHint(rowWidget.sizeHint())
-            self.workflowListWidget.addItem(item)
-            self.workflowListWidget.setItemWidget(item, rowWidget)
+                item = QListWidgetItem()
+                item.setData(Qt.ItemDataRole.UserRole, workflow)
+                item.setSizeHint(rowWidget.sizeHint())
+                self.workflowListWidget.addItem(item)
+                self.workflowListWidget.setItemWidget(item, rowWidget)
 
     def toggleWorkflowEnabled(self, workflow, state):
         workflow.enabled = (state == Qt.Checked)
@@ -1036,7 +1177,7 @@ class MainWindow(QMainWindow, ShotManager):
             # Attach the new workflow and refresh
             shot.workflows.append(new_workflow)
             self.refreshWorkflowsList(shot)
-            QMessageBox.information(self, "Info", "Workflow added to the shot.")
+            # QMessageBox.information(self, "Info", "Workflow added to the shot.")
 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
@@ -1065,7 +1206,7 @@ class MainWindow(QMainWindow, ShotManager):
                 while self.workflowParamsLayout.rowCount() > 0:
                     self.workflowParamsLayout.removeRow(0)
                 self.workflowParamsGroup.setEnabled(False)
-                QMessageBox.information(self, "Info", "Workflow removed from the shot.")
+                # QMessageBox.information(self, "Info", "Workflow removed from the shot.")
                 self.refreshParamsList(shot)
 
     def saveCurrentWorkflowParamsAsDefault(self, workflow: WorkflowAssignment):
@@ -1220,21 +1361,22 @@ class MainWindow(QMainWindow, ShotManager):
 
     def refreshParamsList(self, shot: Shot):
         self.paramsListWidget.clear()
-        for param in shot.params:
-            item = QListWidgetItem(f"{param['name']} ({param['type']}) : {param['value']}")
-            item.setData(Qt.ItemDataRole.UserRole, ("shot", param))
-            self.paramsListWidget.addItem(item)
+        if shot:
+            for param in shot.params:
+                item = QListWidgetItem(f"{param['name']} ({param['type']}) : {param['value']}")
+                item.setData(Qt.ItemDataRole.UserRole, ("shot", param))
+                self.paramsListWidget.addItem(item)
 
-        for wf in shot.workflows:
-            if "params" in wf.parameters:
-                for param in wf.parameters["params"]:
-                    node_ids = param.get("nodeIDs", [])
-                    for node_id in node_ids:
-                        if param.get("visible", True):
-                            label = f"[{os.path.basename(wf.path)}] [{node_id}] {param['name']} ({param['type']}) : {param['value']}"
-                            item = QListWidgetItem(label)
-                            item.setData(Qt.ItemDataRole.UserRole, ("workflow", wf, node_id, param))
-                            self.paramsListWidget.addItem(item)
+            for wf in shot.workflows:
+                if "params" in wf.parameters:
+                    for param in wf.parameters["params"]:
+                        node_ids = param.get("nodeIDs", [])
+                        for node_id in node_ids:
+                            if param.get("visible", True):
+                                label = f"[{os.path.basename(wf.path)}] [{node_id}] {param['name']} ({param['type']}) : {param['value']}"
+                                item = QListWidgetItem(label)
+                                item.setData(Qt.ItemDataRole.UserRole, ("workflow", wf, node_id, param))
+                                self.paramsListWidget.addItem(item)
 
     def stopRendering(self):
         """
@@ -1573,11 +1715,56 @@ class MainWindow(QMainWindow, ShotManager):
             return None
 
     def showSettingsDialog(self):
-        dialog = SettingsDialog(self.settingsManager, self)
+        dialog = SettingsDialog(self.settingsManager, self.localization, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.loadWorkflows()
             if self.currentShotIndex != -1:
                 self.fillDock()
+            # selected_language = dialog.get_selected_language()
+            self.localization.set_language(self.settingsManager.get("language"))
+            self.retranslateUi()
+
+    def retranslateUi(self):
+        """
+        Update all UI elements with the new language.
+        Call this method after changing the language.
+        """
+        # Update Menu Bar
+        self.updateMenuBarTexts()
+
+        # Update Tool Bar
+        self.updateToolBarTexts()
+
+        # Update Status Bar
+        self.updateStatusBarTexts()
+
+        # Update Workflow Tabs
+        self.updateWorkflowsTabTexts()
+
+        self.listWidgetBase.updateTexts()
+
+        # Update Other UI Components
+        self.updateList()
+        self.refreshWorkflowsList(self.shots[self.currentShotIndex] if self.currentShotIndex != -1 else None)
+        self.refreshParamsList(self.shots[self.currentShotIndex] if self.currentShotIndex != -1 else None)
+
+        # Update Dock Titles if needed
+        self.dock.setWindowTitle(self.localization.translate("shot_details", default="Shot Details"))
+        self.dockTabWidget.setTabText(0, self.localization.translate("workflows", default="Workflows"))
+        self.dockTabWidget.setTabText(1, self.localization.translate("params", default="Parameters"))
+
+        # Update any dynamically created widgets or labels within dialogs
+        # For example, if you have any currently open dialogs, you may need to update their texts as well
+        # Update Terminal Dock
+        self.terminalDock.setWindowTitle(self.localization.translate("terminal_output", default="Terminal Output"))
+
+        rtl_languages = ['he', 'ar', 'fa', 'ur']  # Add other RTL language codes as needed
+        current_language = self.localization.get_language()
+        is_rtl = current_language in rtl_languages
+        if is_rtl:
+            QApplication.instance().setLayoutDirection(Qt.RightToLeft)
+        else:
+            QApplication.instance().setLayoutDirection(Qt.LeftToRight)
 
     def onParamChanged(self, paramDict, newVal):
         paramDict["value"] = newVal
@@ -1846,12 +2033,12 @@ class MainWindow(QMainWindow, ShotManager):
 
             # Prompt the user to select which input parameter to set to the last output
             params = new_workflow.parameters.get("params", [])
-            visible_params = [param for param in params if param.get("visible", True)]
-            if not visible_params:
-                QMessageBox.information(self, "Info", "The workflow has no visible parameters to set.")
-                return
+            # visible_params = [param for param in params if param.get("visible", True)]
+            # if not visible_params:
+            #     QMessageBox.information(self, "Info", "The workflow has no visible parameters to set.")
+            #     return
 
-            param_names = [param["name"] for param in visible_params]
+            param_names = [param["name"] for param in params]
             param, ok = QInputDialog.getItem(
                 self,
                 "Select Input Parameter",

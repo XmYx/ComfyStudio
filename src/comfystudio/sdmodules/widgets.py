@@ -44,6 +44,7 @@ class ReorderableListWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
+        self.localization = self.parent_window.localization
         self.drag_item = None
 
         # Instead of using QListWidgetItem as a dict key (unhashable),
@@ -113,22 +114,38 @@ class ReorderableListWidget(QWidget):
         self.setMouseTracking(True)
         self.listWidget.setMouseTracking(True)
 
+    def updateTexts(self):
+        """
+        Update all translatable texts in the ReorderableListWidget.
+        Call this method from the parent window's retranslateUi method.
+        """
+        # Update Labels
+        self.zoom_label.setText(self.localization.translate("label_zoom", default="Zoom:"))
+
+        # Update Buttons
+        current_view_mode = self.listWidget.viewMode()
+        if current_view_mode == QListView.IconMode:
+            self.view_switch_button.setText(self.localization.translate("button_switch_to_list_view", default="Switch to List View"))
+        else:
+            self.view_switch_button.setText(self.localization.translate("button_switch_to_grid_view", default="Switch to Grid View"))
+
     def onViewModeSwitch(self):
         """
         Toggle between a "Grid" (IconMode) and a "List" (ListMode) view.
+        Also update the button text accordingly.
         """
         if self.listWidget.viewMode() == QListView.IconMode:
             # Switch to List Mode
             self.listWidget.setViewMode(QListView.ListMode)
-            self.listWidget.setFlow(QListView.TopToBottom)
+            self.listWidget.setFlow(QListWidget.TopToBottom)
             self.listWidget.setWrapping(False)
-            self.view_switch_button.setText("Switch to Grid View")
+            self.view_switch_button.setText(self.localization.translate("button_switch_to_grid_view", default="Switch to Grid View"))
         else:
             # Switch back to Grid (Icon) Mode
             self.listWidget.setViewMode(QListView.IconMode)
-            self.listWidget.setFlow(QListView.LeftToRight)
+            self.listWidget.setFlow(QListWidget.LeftToRight)
             self.listWidget.setWrapping(True)
-            self.view_switch_button.setText("Switch to List View")
+            self.view_switch_button.setText(self.localization.translate("button_switch_to_list_view", default="Switch to List View"))
         # Trigger a repaint to adjust layout
         self.listWidget.viewport().update()
 
