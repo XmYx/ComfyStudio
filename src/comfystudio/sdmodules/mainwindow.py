@@ -12,7 +12,6 @@ import urllib
 from typing import List, Dict
 
 import requests
-from PyQt6.QtWidgets import QToolButton
 from qtpy import QtCore
 from qtpy.QtGui import QCursor
 from qtpy.QtWidgets import (
@@ -201,93 +200,6 @@ class MainWindow(QMainWindow, ShotManager):
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
 
-    # def initWorkflowsTab(self):
-    #     layout = self.workflowsLayout
-    #
-    #     # Comboboxes for adding image/video workflows
-    #     comboLayout = QHBoxLayout()
-    #
-    #     # Image Workflow Section
-    #     self.imageWorkflowLabel = QLabel(self.localization.translate("label_image_workflow", default="Image Workflow:"))
-    #     self.imageWorkflowCombo = QComboBox()
-    #     self.imageWorkflowCombo.setToolTip(
-    #         self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
-    #     self.addImageWorkflowBtn = QPushButton(
-    #         self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
-    #     self.addImageWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_image_workflow",
-    #                                                                     default="Add the selected Image Workflow to the shot"))
-    #
-    #     # Connect Image Workflow Button
-    #     self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
-    #
-    #     # Video Workflow Section
-    #     self.videoWorkflowLabel = QLabel(self.localization.translate("label_video_workflow", default="Video Workflow:"))
-    #     self.videoWorkflowCombo = QComboBox()
-    #     self.videoWorkflowCombo.setToolTip(
-    #         self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
-    #     self.addVideoWorkflowBtn = QPushButton(
-    #         self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
-    #     self.addVideoWorkflowBtn.setToolTip(self.localization.translate("tooltip_add_video_workflow",
-    #                                                                     default="Add the selected Video Workflow to the shot"))
-    #
-    #     # Connect Video Workflow Button
-    #     self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
-    #
-    #     # Assemble Combo Layout
-    #     comboLayout.addWidget(self.imageWorkflowLabel)
-    #     comboLayout.addWidget(self.imageWorkflowCombo)
-    #     comboLayout.addWidget(self.addImageWorkflowBtn)
-    #     comboLayout.addSpacing(20)  # Optional: Add spacing between sections
-    #     comboLayout.addWidget(self.videoWorkflowLabel)
-    #     comboLayout.addWidget(self.videoWorkflowCombo)
-    #     comboLayout.addWidget(self.addVideoWorkflowBtn)
-    #
-    #     layout.addLayout(comboLayout)
-    #
-    #     # Workflow List
-    #     self.workflowListLabel = QLabel(
-    #         self.localization.translate("label_workflow_list", default="Available Workflows:"))
-    #     layout.addWidget(self.workflowListLabel)
-    #
-    #     self.workflowListWidget = QListWidget()
-    #     self.workflowListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-    #     self.workflowListWidget.itemClicked.connect(self.onWorkflowItemClicked)
-    #     self.workflowListWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-    #     self.workflowListWidget.customContextMenuRequested.connect(self.onWorkflowListContextMenu)
-    #     layout.addWidget(self.workflowListWidget)
-    #
-    #     # Buttons to Remove Workflows
-    #     buttonsLayout = QHBoxLayout()
-    #     self.removeWorkflowBtn = QPushButton(
-    #         self.localization.translate("button_remove_workflow", default="Remove Workflow"))
-    #     self.removeWorkflowBtn.setToolTip(self.localization.translate("tooltip_remove_workflow",
-    #                                                                   default="Remove the selected Workflow from the shot"))
-    #     buttonsLayout.addWidget(self.removeWorkflowBtn)
-    #     layout.addLayout(buttonsLayout)
-    #
-    #     # Connect Remove Workflow Button
-    #     self.removeWorkflowBtn.clicked.connect(self.removeWorkflowFromShot)
-    #
-    #     # Toggle Hidden Parameters
-    #     self.toggleHiddenParamsBtn = QPushButton(
-    #         self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
-    #     self.toggleHiddenParamsBtn.setToolTip(self.localization.translate("tooltip_toggle_hidden_params",
-    #                                                                       default="Toggle the visibility of hidden parameters"))
-    #     self.toggleHiddenParamsBtn.clicked.connect(self.toggleHiddenParams)
-    #     layout.addWidget(self.toggleHiddenParamsBtn)
-    #
-    #     # Parameters Area in a Scroll
-    #     self.workflowParamsGroup = QGroupBox(
-    #         self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
-    #     self.workflowParamsLayout = QFormLayout(self.workflowParamsGroup)
-    #     self.workflowParamsGroup.setLayout(self.workflowParamsLayout)
-    #     self.workflowParamsGroup.setEnabled(False)
-    #
-    #     self.workflowParamsScroll = QScrollArea()
-    #     self.workflowParamsScroll.setWidgetResizable(True)
-    #     self.workflowParamsScroll.setWidget(self.workflowParamsGroup)
-    #
-    #     layout.addWidget(self.workflowParamsScroll)
     def initWorkflowsTab(self):
         """
         Makes the entire workflow selection portion collapsible within a group,
@@ -315,8 +227,9 @@ class MainWindow(QMainWindow, ShotManager):
             # and show/hide instead.
             for w in self.workflowGroupBox.children():
                 if w is not groupLayout:  # skip the layout
-                    w.setEnabled(checked)
-                    w.setVisible(not w.isVisible())
+                    # w.setEnabled(checked)
+                    if hasattr(w, "setVisible"):
+                        w.setVisible(not w.isVisible())
 
         self.workflowGroupBox.toggled.connect(onWorkflowsToggled)
 
@@ -407,16 +320,17 @@ class MainWindow(QMainWindow, ShotManager):
 
         layout.addWidget(self.workflowParamsScroll)
 
-    def onWorkflowGroupToggled(self, expanded: bool):
-        """
-        Slot called when the QGroupBox (workflowGroup) is toggled.
-        If expanded is False, we hide the internal widgets; if True, show them.
-        """
-        # When a checkable QGroupBox is unchecked, it usually disables its contents
-        # but doesn't fully hide/collapse them. We can manually hide or show them here if desired:
-        for w in (self.workflowListLabel, self.workflowListWidget,
-                  self.removeWorkflowBtn, self.toggleHiddenParamsBtn):
-            w.setVisible(expanded)
+    # def onWorkflowGroupToggled(self, expanded: bool):
+    #     """
+    #     Slot called when the QGroupBox (workflowGroup) is toggled.
+    #     If expanded is False, we hide the internal widgets; if True, show them.
+    #     """
+    #     # When a checkable QGroupBox is unchecked, it usually disables its contents
+    #     # but doesn't fully hide/collapse them. We can manually hide or show them here if desired:
+    #     for w in (self.workflowListLabel, self.workflowListWidget,
+    #               self.removeWorkflowBtn, self.toggleHiddenParamsBtn):
+    #         w.setVisible(expanded)
+
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)
         if not item:
@@ -766,19 +680,28 @@ class MainWindow(QMainWindow, ShotManager):
             return
 
         menu = QMenu(self)
-        deleteAction = menu.addAction("Delete Shot(s)")
-        duplicateAction = menu.addAction("Duplicate Shot(s)")
-        extendAction = menu.addAction("Extend Clip(s)")
+        deleteAction = menu.addAction(
+            self.localization.translate("context_delete_shots", default="Delete Shot(s)")
+        )
+        duplicateAction = menu.addAction(
+            self.localization.translate("context_duplicate_shots", default="Duplicate Shot(s)")
+        )
+        extendAction = menu.addAction(
+            self.localization.translate("context_extend_clips", default="Extend Clip(s)")
+        )
         if len(selected_items) > 1:
-            mergeAction = menu.addAction("Merge Clips")
+            mergeAction = menu.addAction(
+                self.localization.translate("context_merge_clips", default="Merge Clips")
+            )
 
         action = menu.exec(self.listWidget.mapToGlobal(pos))
 
         if action == deleteAction:
             reply = QMessageBox.question(
                 self,
-                "Delete Shot(s)",
-                "Are you sure you want to delete the selected shots?",
+                self.localization.translate("dialog_delete_shots_title", default="Delete Shot(s)"),
+                self.localization.translate("dialog_delete_shots_question",
+                                            default="Are you sure you want to delete the selected shots?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
@@ -810,7 +733,11 @@ class MainWindow(QMainWindow, ShotManager):
 
     def mergeClips(self, selected_indices):
         if len(selected_indices) < 2:
-            QMessageBox.warning(self, "Warning", "Select at least two clips to merge.")
+            QMessageBox.warning(
+                self,
+                self.localization.translate("dialog_warning_title", default="Warning"),
+                self.localization.translate("warning_merge_minimum", default="Select at least two clips to merge.")
+            )
             return
 
         video_paths = []
@@ -818,7 +745,13 @@ class MainWindow(QMainWindow, ShotManager):
             shot = self.shots[idx]
             video_path = shot.videoPath
             if not video_path or not os.path.exists(video_path):
-                QMessageBox.warning(self, "Warning", f"Shot '{shot.name}' has no valid video path.")
+                QMessageBox.warning(
+                    self,
+                    self.localization.translate("dialog_warning_title", default="Warning"),
+                    self.localization.translate("warning_no_valid_video_path",
+                                                default="Shot '{shot_name}' has no valid video path.").format(
+                        shot_name=shot.name)
+                )
                 return
             video_paths.append(video_path)
 
@@ -830,7 +763,10 @@ class MainWindow(QMainWindow, ShotManager):
         if hasattr(self, 'currentFilePath') and self.currentFilePath:
             project_folder = os.path.dirname(self.currentFilePath)
         else:
-            QMessageBox.warning(self, "Warning", "No project file is currently open. Merged video will be saved to the temporary directory.")
+            QMessageBox.warning(self,
+                                self.localization.translate("dialog_warning_title", default="Warning"),
+                                self.localization.translate("warning_no_project", default="No project file is currently open. Merged video will be saved to the temporary directory.")
+                                )
             project_folder = tempfile.gettempdir()
 
         merged_filename = f"merged_video_{random.randint(100000, 999999)}.mp4"
@@ -845,7 +781,12 @@ class MainWindow(QMainWindow, ShotManager):
         try:
             subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
-            QMessageBox.warning(self, "Error", f"Failed to merge videos: {e.stderr.decode()}")
+            QMessageBox.warning(
+                self,
+                self.localization.translate("dialog_error_title", default="Error"),
+                self.localization.translate("error_failed_to_merge", default="Failed to merge videos: {error}")
+                .format(error=e.stderr.decode())
+            )
             os.remove(temp_file_list)
             return
 
