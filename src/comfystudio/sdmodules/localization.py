@@ -29,7 +29,7 @@ class LocalizationManager:
                 text = text.format(**kwargs)
             except KeyError as e:
                 print(f"Missing placeholder in translation for key '{key}': {e}")
-        return text
+        return kwargs.get("default", text)
 
     def set_language(self, language_code):
         self.load_language(language_code)

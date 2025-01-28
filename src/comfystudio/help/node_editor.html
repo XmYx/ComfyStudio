@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Node Editor with ComfyUI - Cinema Shot Designer</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <h1>Node Editor with ComfyUI</h1>
+    <p>Cinema Shot Designer leverages <strong>ComfyUI</strong> as its backend node editor, enabling versatile and complex workflows through node-based configurations.</p>
+    <h2>Understanding Nodes</h2>
+    <p>Each workflow consists of a network of nodes, where each node performs a specific function or transformation on your shot's data.</p>
+    <ul>
+        <li><strong>Node Types:</strong> Image nodes, Video nodes, Parameter nodes, and more.</li>
+        <li><strong>Inputs and Outputs:</strong> Nodes have defined inputs and outputs to pass data through the workflow.</li>
+    </ul>
+    <h2>Chaining Workflows</h2>
+    <p>You can chain multiple workflows to process your shots in stages:</p>
+    <ol>
+        <li>Add multiple workflows to a single shot in the <em>Workflows</em> tab.</li>
+        <li>Each workflow can be configured to take inputs from the outputs of previous workflows.</li>
+        <li>This allows for complex processing pipelines, such as applying multiple image transformations or video edits sequentially.</li>
+    </ol>
+    <h2>Iterating Workflows</h2>
+    <p>Iteration over workflows allows for repetitive processing steps:</p>
+    <ul>
+        <li><strong>Looping Nodes:</strong> Configure nodes to loop over data for repeated transformations.</li>
+        <li><strong>Dynamic Parameters:</strong> Use parameters that change based on previous workflow outputs to create adaptive processing steps.</li>
+    </ul>
+    <h2>Creating Custom Nodes</h2>
+    <p>Extend the functionality of ComfyUI by creating custom nodes:</p>
+    <ol>
+        <li>Develop custom node scripts and place them in the <em>plugins</em> directory.</li>
+        <li>Use the <em>Install/Update Custom Nodes</em> option in the <em>Settings</em> menu to integrate your custom nodes.</li>
+        <li>Once installed, your custom nodes will be available in the node editor for use in workflows.</li>
+    </ol>
+    <h2>Hyperlinks</h2>
+    <p>For more information on ComfyUI, visit the <a href="https://comfyui.org">ComfyUI official website</a>.</p>
+</body>
+</html>

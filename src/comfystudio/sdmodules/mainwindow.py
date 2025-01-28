@@ -60,7 +60,9 @@ from qtpy.QtGui import (
     QAction
 )
 
+from comfystudio.sdmodules.aboutdialog import AboutDialog
 from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
+from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
@@ -419,6 +421,7 @@ class MainWindow(QMainWindow, ShotManager):
         # Initialize Menus
         self.fileMenu = QMenu(self)
         self.settingsMenu = QMenu(self)
+        self.helpMenu = QMenu(self)  # New Help Menu
 
         # Initialize Actions
         self.newAct = QAction(self)
@@ -431,6 +434,10 @@ class MainWindow(QMainWindow, ShotManager):
         self.saveDefaultsAct = QAction(self)
         self.openSettingsAct = QAction(self)
         self.setupComfyAct = QAction(self)
+
+        # Help Menu Actions
+        self.userGuideAct = QAction(self)
+        self.aboutAct = QAction(self)
 
         # Set initial texts
         self.updateMenuBarTexts()
@@ -447,6 +454,10 @@ class MainWindow(QMainWindow, ShotManager):
         self.openSettingsAct.triggered.connect(self.showSettingsDialog)
         self.setupComfyAct.triggered.connect(self.setup_custom_nodes)
 
+        # Help Menu Actions Connections
+        self.userGuideAct.triggered.connect(self.openUserGuide)
+        self.aboutAct.triggered.connect(self.openAboutDialog)
+
         # Add actions to File Menu
         self.fileMenu.addAction(self.newAct)
         self.fileMenu.addAction(self.openAct)
@@ -462,9 +473,15 @@ class MainWindow(QMainWindow, ShotManager):
         self.settingsMenu.addAction(self.openSettingsAct)
         self.settingsMenu.addAction(self.setupComfyAct)
 
+        # Add actions to Help Menu
+        self.helpMenu.addAction(self.userGuideAct)
+        self.helpMenu.addSeparator()
+        self.helpMenu.addAction(self.aboutAct)
+
         # Add Menus to Menu Bar
         self.menuBar().addMenu(self.fileMenu)
         self.menuBar().addMenu(self.settingsMenu)
+        self.menuBar().addMenu(self.helpMenu)  # Add Help Menu
 
     def createToolBar(self):
         # Clear existing toolbar to prevent duplication
@@ -544,6 +561,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Update Settings Menu Title
         self.settingsMenu.setTitle(self.localization.translate("menu_settings", default="Settings"))
+        self.helpMenu.setTitle(self.localization.translate("menu_help", default="Help"))
 
         # Update Actions Texts
         self.newAct.setText(self.localization.translate("menu_new_project", default="New Project"))
@@ -557,7 +575,9 @@ class MainWindow(QMainWindow, ShotManager):
             self.localization.translate("menu_save_defaults", default="Save Workflow Defaults"))
         self.openSettingsAct.setText(self.localization.translate("menu_open_settings", default="Open Settings"))
         self.setupComfyAct.setText(self.localization.translate("menu_setup_comfy", default="Install/Update Custom Nodes"))
-
+        # Update Help Menu Actions Texts
+        self.userGuideAct.setText(self.localization.translate("menu_user_guide", default="User Guide"))
+        self.aboutAct.setText(self.localization.translate("menu_about", default="About"))
     def updateToolBarTexts(self):
         # Update Toolbar Name if needed (optional)
         # self.toolbar.setWindowTitle(self.localization.translate("toolbar_name", default="Main Toolbar"))
@@ -614,7 +634,13 @@ class MainWindow(QMainWindow, ShotManager):
             self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
         self.videoWorkflowCombo.setToolTip(
             self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
+    def openUserGuide(self):
+        help_window = HelpWindow(self)
+        help_window.exec()
 
+    def openAboutDialog(self):
+        about_dialog = AboutDialog(self)
+        about_dialog.exec()
     def appendLog(self, text):
         self.terminalTextEdit.append(text)
         self.logLabel.setText(text)
