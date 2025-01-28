@@ -1989,7 +1989,7 @@ class MainWindow(QMainWindow, ShotManager):
             self.comfy_worker.finished.connect(self.comfy_thread.quit)
             self.comfy_worker.finished.connect(self.comfy_worker.deleteLater)
             self.comfy_thread.finished.connect(self.comfy_thread.deleteLater)
-            self.comfy_worker.finished.connect(lambda: self.onComfyFinished())
+            self.comfy_worker.finished.connect(lambda: self.onComfyFinishedRunning())
 
             # Start the thread
             self.comfy_thread.start()
@@ -1998,7 +1998,7 @@ class MainWindow(QMainWindow, ShotManager):
             self.appendLog("ComfyUI process started.")
         else:
             QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
-    def onComfyFinished(self):
+    def onComfyFinishedRunning(self):
         """
         Handles the completion of the ComfyUI process.
         """
