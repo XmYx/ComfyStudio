@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QScrollArea,
     QInputDialog,
-    QMenu
+    QMenu, QFrame
 )
 from qtpy.QtCore import (
     Qt,
@@ -59,6 +59,7 @@ from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
 from comfystudio.sdmodules.shot_manager import ShotManager
+from comfystudio.sdmodules.videotools import extract_frame
 from comfystudio.sdmodules.widgets import ReorderableListWidget
 from comfystudio.sdmodules.worker import RenderWorker
 
@@ -377,9 +378,9 @@ class MainWindow(QMainWindow, ShotManager):
         fileMenu.addAction(renderSelectedAct)
         fileMenu.addAction(renderAllAct)
 
-        workflowEditorAct = QAction("Workflow Editor", self)
-        workflowEditorAct.triggered.connect(self.openWorkflowEditor)
-        fileMenu.addAction(workflowEditorAct)
+        saveDefaultsAct = QAction("Save Workflow Defaults", self)
+        saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
+        fileMenu.addAction(saveDefaultsAct)
 
         settingsMenu = QMenu("Settings", self)
         openSettingsAct = QAction("Open Settings", self)
@@ -582,8 +583,8 @@ class MainWindow(QMainWindow, ShotManager):
         insert_idx = selected_indices[-1] + 1
         self.shots.insert(insert_idx, new_shot)
 
-        for idx in sorted(selected_indices, reverse=True):
-            del self.shots[idx]
+        # for idx in sorted(selected_indices, reverse=True):
+        #     del self.shots[idx]
 
         self.updateList()
         self.currentShotIndex = insert_idx
@@ -613,10 +614,10 @@ class MainWindow(QMainWindow, ShotManager):
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
 
     def onSelectionChanged(self):
-        # try:
-        #     self.player.stop()
-        # except:
-        #     pass
+        try:
+            self.player.stop()
+        except:
+            pass
         selected_items = self.listWidget.selectedItems()
         if len(selected_items) == 1:
             idx = selected_items[0].data(Qt.ItemDataRole.UserRole)
@@ -678,7 +679,7 @@ class MainWindow(QMainWindow, ShotManager):
         if ptype == "int":
             w = QSpinBox()
             w.setRange(-2147483648, 2147483647)
-            w.setValue(min(pval, 2147483647))
+            w.setValue(min(int(pval), 2147483647))
             w.valueChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
         elif ptype == "float":
@@ -749,70 +750,105 @@ class MainWindow(QMainWindow, ShotManager):
             dlg.exec()
         except:
             pass
+
     def onWorkflowItemClicked(self, item):
-        """
-        Called when a workflow item is clicked in the workflowListWidget.
-        Now we also allow a right-click context menu on each parameter row,
-        just like in the params tab.
-        """
         workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
         if not workflow:
             return
 
         self.workflowParamsGroup.setEnabled(True)
 
+        # If you need to send signals:
         if self.currentShotIndex >= 0 and self.currentShotIndex < len(self.shots):
             shot = self.shots[self.currentShotIndex]
             wfIndex = shot.workflows.index(workflow) if workflow in shot.workflows else -1
-            # Emit a signal to let the preview dock show this workflow's result
             if wfIndex != -1:
                 self.workflowSelected.emit(self.currentShotIndex, wfIndex)
 
-
-        # Clear existing rows
+        # Clear existing rows in the layout
         while self.workflowParamsLayout.rowCount() > 0:
             self.workflowParamsLayout.removeRow(0)
 
-        params_to_show = workflow.parameters.get("params", [])
-        for param in params_to_show:
-            visible = param.get("visible", True)
-            if not visible and not self.showHiddenParams:
+        params_list = workflow.parameters.get("params", [])
+
+        # 1) Group by node_id (or use nodeMetaTitle as key if you prefer).
+        #    We'll store data in a dict: node_id -> { "title": ..., "params": [] }
+        node_map = {}
+        for param in params_list:
+            # Skip if invisible and user isn't showing hidden
+            if not param.get("visible", True) and not self.showHiddenParams:
                 continue
 
-            rowWidget = QWidget()
-            rowLayout = QHBoxLayout(rowWidget)
-            rowLayout.setContentsMargins(0, 0, 0, 0)
+            # For each node in param["nodeIDs"], group them
+            # Usually there's just one node_id in that list
+            for node_id in param.get("nodeIDs", []):
+                # Use nodeMetaTitle for display, fallback to node_id if empty
+                meta_title = param.get("nodeMetaTitle", "") or node_id
+                if node_id not in node_map:
+                    node_map[node_id] = {
+                        "title": meta_title,
+                        "params": []
+                    }
+                node_map[node_id]["params"].append(param)
 
-            paramLabel = QLabel(param.get("displayName", param["name"]))
+        # 2) Now display each node group if it has any visible params
+        for node_id, node_info in node_map.items():
+            # If "params" is empty, skip
+            if not node_info["params"]:
+                continue
 
-            # If this param is flagged to use prev result, show a reminder in parentheses
-            suffix = ""
-            if param.get("usePrevResultImage"):
-                suffix = " (Using prev image)"
-            elif param.get("usePrevResultVideo"):
-                suffix = " (Using prev video)"
-            if suffix:
-                paramLabel.setText(paramLabel.text() + suffix)
+            # a) Insert a label with the node’s title
+            title_label = QLabel(f"Node: {node_info['title']}")
+            title_font = title_label.font()
+            title_font.setBold(True)
+            title_label.setFont(title_font)
+            self.workflowParamsLayout.addRow(title_label)
 
-            paramWidget = self.createBasicParamWidget(param)
+            # b) For each param in this node, add the param row
+            for param in node_info["params"]:
+                rowWidget = QWidget()
+                rowLayout = QHBoxLayout(rowWidget)
+                rowLayout.setContentsMargins(0, 0, 0, 0)
 
-            visibilityCheckbox = QCheckBox("Visible?")
-            visibilityCheckbox.setChecked(visible)
-            visibilityCheckbox.stateChanged.connect(
-                lambda checked, p=param, wf=workflow: self.onParamVisibilityChanged(wf, p, bool(checked))
-            )
+                paramLabel = QLabel(f"{param.get('displayName', param['name'])}")
+                # If you still want to show node_id next to each param:
+                # paramLabel.setText(paramLabel.text() + f" [{node_id}]")
 
-            rowLayout.addWidget(paramLabel)
-            rowLayout.addWidget(paramWidget)
-            rowLayout.addWidget(visibilityCheckbox)
+                # Show suffix if using dynamic overrides
+                suffix = ""
+                if param.get("usePrevResultImage"):
+                    suffix = " (Using prev image)"
+                elif param.get("usePrevResultVideo"):
+                    suffix = " (Using prev video)"
+                if suffix:
+                    paramLabel.setText(paramLabel.text() + suffix)
 
-            # Give the entire row a context menu policy so we can replicate the dynamic override logic
-            rowWidget.setContextMenuPolicy(Qt.CustomContextMenu)
-            rowWidget.customContextMenuRequested.connect(
-                lambda pos, p=param: self.onWorkflowParamContextMenu(pos, p)
-            )
+                paramWidget = self.createBasicParamWidget(param)
 
-            self.workflowParamsLayout.addRow(rowWidget)
+                visibilityCheckbox = QCheckBox("Visible?")
+                visibilityCheckbox.setChecked(param.get("visible", False))
+                visibilityCheckbox.setProperty("node_id", node_id)
+                visibilityCheckbox.setProperty("param", param)
+                visibilityCheckbox.stateChanged.connect(
+                    lambda state, cb=visibilityCheckbox, wf=workflow, nid=node_id, p=param:
+                    self.onParamVisibilityChanged(wf, nid, p, cb.isChecked())
+                )
+
+                rowLayout.addWidget(paramLabel)
+                rowLayout.addWidget(paramWidget)
+                rowLayout.addWidget(visibilityCheckbox)
+                rowWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                rowWidget.customContextMenuRequested.connect(
+                    lambda pos, p=param: self.onWorkflowParamContextMenu(pos, p)
+                )
+
+                self.workflowParamsLayout.addRow(rowWidget)
+
+            # c) Insert a horizontal divider after each node group
+            divider = QFrame()
+            divider.setFrameShape(QFrame.Shape.HLine)
+            divider.setFrameShadow(QFrame.Shadow.Sunken)
+            self.workflowParamsLayout.addRow(divider)
 
     def onWorkflowParamContextMenu(self, pos, param):
         """
@@ -832,6 +868,11 @@ class MainWindow(QMainWindow, ShotManager):
                 param["usePrevResultImage"] = True
                 param["usePrevResultVideo"] = False
                 param["value"] = "(Awaiting previous workflow image)"
+                param["dynamicOverrides"] = {
+                    "type": "shot",
+                    "shotIndex": self.currentShotIndex,
+                    "assetType": "image"
+                }
                 QMessageBox.information(self, "Info",
                                         "This parameter is now flagged to use the previous workflow's image result."
                                         )
@@ -839,12 +880,18 @@ class MainWindow(QMainWindow, ShotManager):
                 param["usePrevResultVideo"] = True
                 param["usePrevResultImage"] = False
                 param["value"] = "(Awaiting previous workflow video)"
+                param["dynamicOverrides"] = {
+                    "type": "shot",
+                    "shotIndex": self.currentShotIndex,
+                    "assetType": "video"
+                }
                 QMessageBox.information(self, "Info",
                                         "This parameter is now flagged to use the previous workflow's video result."
                                         )
             elif chosen == clearDynOverride:
                 param.pop("usePrevResultImage", None)
                 param.pop("usePrevResultVideo", None)
+                param.pop("dynamicOverrides", None)
                 QMessageBox.information(self, "Info", "Dynamic override cleared.")
         else:
             # Non-string param, do nothing or show minimal menu
@@ -861,9 +908,9 @@ class MainWindow(QMainWindow, ShotManager):
         param["value"] = newVal
         self.saveCurrentWorkflowParams()
 
-    def onParamVisibilityChanged(self, workflow: WorkflowAssignment, param: Dict, visible: bool):
+    def onParamVisibilityChanged(self, workflow: WorkflowAssignment, node_id: str, param: Dict, visible: bool):
         param["visible"] = visible
-        self.setParamVisibility(workflow.path, param["name"], visible)
+        self.setParamVisibility(workflow.path, node_id, param["name"], visible)
         self.onWorkflowItemClicked(self.workflowListWidget.currentItem())
         self.refreshParamsList(self.shots[self.currentShotIndex])
 
@@ -895,36 +942,59 @@ class MainWindow(QMainWindow, ShotManager):
             return
         self.addWorkflowToShot(path, isVideo=True)
 
+    def saveWorkflowDefaults(self, workflow_path, parameters):
+        defaults = self.settingsManager.get("workflow_defaults", {})
+        defaults[workflow_path] = parameters
+        self.settingsManager.set("workflow_defaults", defaults)
+        self.settingsManager.save()
+
+    def loadWorkflowDefaults(self, workflow_path):
+        defaults = self.settingsManager.get("workflow_defaults", {})
+        return defaults.get(workflow_path, None)
+
     def addWorkflowToShot(self, workflow_path, isVideo=False):
+        """
+        Adds a new workflow to the currently selected shot, loading any default
+        parameters (including dynamic overrides) if they exist.
+        """
         if self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
             QMessageBox.warning(self, "Warning", "No shot selected.")
             return
+
         shot = self.shots[self.currentShotIndex]
 
-        for wf in shot.workflows:
-            if wf.path == workflow_path and wf.isVideo == isVideo:
-                QMessageBox.information(self, "Info", "Workflow already added to this shot.")
-                return
+        # Prevent adding the same workflow twice
+        # for wf in shot.workflows:
+        #     if wf.path == workflow_path and wf.isVideo == isVideo:
+        #         QMessageBox.information(self, "Info", "Workflow already added to this shot.")
+        #         return
 
         try:
+            # Load the workflow JSON
             with open(workflow_path, "r") as f:
                 workflow_json = json.load(f)
 
+            # Create a list of params to expose
             params_to_expose = []
             for node_id, node_data in workflow_json.items():
                 inputs = node_data.get("inputs", {})
+                node_meta_title = node_data.get("_meta", {}).get("title", "")  # <--- get the node's _meta.title
                 for key, value in inputs.items():
                     ptype = type(value).__name__
                     if ptype not in ["int", "float"]:
                         ptype = "string"
-                    param_visibility = self.getParamVisibility(workflow_path, key)
+
+                    # Load visibility state from settings, keyed by node_id + param name
+                    param_visibility = self.getParamVisibility(workflow_path, node_id, key)
+
                     params_to_expose.append({
                         "name": key,
                         "type": ptype,
                         "value": value,
                         "nodeIDs": [node_id],
                         "displayName": key,
-                        "visible": param_visibility
+                        "visible": param_visibility,
+                        "nodeMetaTitle": node_meta_title,
                     })
 
             new_workflow = WorkflowAssignment(
@@ -933,9 +1003,41 @@ class MainWindow(QMainWindow, ShotManager):
                 parameters={"params": params_to_expose},
                 isVideo=isVideo
             )
+
+            # Attempt to load defaults from settings
+            defaults = self.loadWorkflowDefaults(workflow_path)
+            if defaults and "params" in defaults:
+                # Merge default values (including dynamic overrides) into our new_workflow
+                for param in new_workflow.parameters.get("params", []):
+                    default_param = next(
+                        (d for d in defaults["params"]
+                         if d["name"] == param["name"] and
+                         d.get("nodeIDs", []) == param.get("nodeIDs", [])),  # matching nodeIDs
+                        None
+                    )
+                    if default_param:
+                        # Copy basic value
+                        param["value"] = default_param.get("value", param["value"])
+
+                        # If the default has dynamicOverrides, merge them too
+                        if "dynamicOverrides" in default_param:
+                            param["dynamicOverrides"] = copy.deepcopy(default_param["dynamicOverrides"])
+                            # If you also use flags like usePrevResultImage, restore them
+                            asset_type = default_param["dynamicOverrides"].get("assetType", "")
+                            if asset_type == "image":
+                                param["usePrevResultImage"] = True
+                                param["usePrevResultVideo"] = False
+                                param["value"] = "(Awaiting previous workflow image)"
+                            elif asset_type == "video":
+                                param["usePrevResultVideo"] = True
+                                param["usePrevResultImage"] = False
+                                param["value"] = "(Awaiting previous workflow video)"
+
+            # Attach the new workflow and refresh
             shot.workflows.append(new_workflow)
             self.refreshWorkflowsList(shot)
             QMessageBox.information(self, "Info", "Workflow added to the shot.")
+
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
 
@@ -965,6 +1067,23 @@ class MainWindow(QMainWindow, ShotManager):
                 self.workflowParamsGroup.setEnabled(False)
                 QMessageBox.information(self, "Info", "Workflow removed from the shot.")
                 self.refreshParamsList(shot)
+
+    def saveCurrentWorkflowParamsAsDefault(self, workflow: WorkflowAssignment):
+        self.saveWorkflowDefaults(workflow.path, workflow.parameters)
+        QMessageBox.information(self, "Info", f"Defaults saved for workflow '{os.path.basename(workflow.path)}'.")
+
+    # Add slot method to handle saving defaults via UI
+    @Slot()
+    def onSaveWorkflowDefaults(self):
+        selected_item = self.workflowListWidget.currentItem()
+        if not selected_item:
+            QMessageBox.warning(self, "Warning", "No workflow selected to save defaults.")
+            return
+        workflow: WorkflowAssignment = selected_item.data(Qt.ItemDataRole.UserRole)
+        if not workflow:
+            QMessageBox.warning(self, "Warning", "Selected item is not a workflow.")
+            return
+        self.saveCurrentWorkflowParamsAsDefault(workflow)
 
     def addParamToShot(self):
         if self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
@@ -1077,7 +1196,8 @@ class MainWindow(QMainWindow, ShotManager):
                 self.refreshParamsList(self.shots[self.currentShotIndex])
             elif data[0] == "workflow":
                 wf = data[1]
-                param = data[2]
+                node_id = data[2]
+                param = data[3]
                 ptype = param["type"]
                 old_val = param["value"]
                 self.editParamValue(param, ptype, old_val)
@@ -1108,11 +1228,13 @@ class MainWindow(QMainWindow, ShotManager):
         for wf in shot.workflows:
             if "params" in wf.parameters:
                 for param in wf.parameters["params"]:
-                    if param.get("visible", True):
-                        label = f"[{os.path.basename(wf.path)}] {param['name']} ({param['type']}) : {param['value']}"
-                        item = QListWidgetItem(label)
-                        item.setData(Qt.ItemDataRole.UserRole, ("workflow", wf, param))
-                        self.paramsListWidget.addItem(item)
+                    node_ids = param.get("nodeIDs", [])
+                    for node_id in node_ids:
+                        if param.get("visible", True):
+                            label = f"[{os.path.basename(wf.path)}] [{node_id}] {param['name']} ({param['type']}) : {param['value']}"
+                            item = QListWidgetItem(label)
+                            item.setData(Qt.ItemDataRole.UserRole, ("workflow", wf, node_id, param))
+                            self.paramsListWidget.addItem(item)
 
     def stopRendering(self):
         """
@@ -1269,8 +1391,8 @@ class MainWindow(QMainWindow, ShotManager):
             for input_key in list(inputs_dict.keys()):
                 ikey_lower = str(input_key).lower()
                 for param in wf_params:
-                    if not param.get("visible", True):
-                        continue
+                    # if not param.get("visible", True):
+                    #     continue
                     node_ids = param.get("nodeIDs", [])
                     if str(node_id) not in node_ids:
                         continue
@@ -1461,17 +1583,19 @@ class MainWindow(QMainWindow, ShotManager):
         paramDict["value"] = newVal
         self.saveCurrentWorkflowParams()
 
-    def getParamVisibility(self, workflow_path, param_name):
+    def getParamVisibility(self, workflow_path, node_id, param_name):
         data = self.settingsManager.get("workflow_param_visibility", {})
-        if workflow_path in data and param_name in data[workflow_path]:
-            return data[workflow_path][param_name]
-        return True
+        if workflow_path in data and node_id in data[workflow_path] and param_name in data[workflow_path][node_id]:
+            return data[workflow_path][node_id][param_name]
+        return False
 
-    def setParamVisibility(self, workflow_path, param_name, visible):
+    def setParamVisibility(self, workflow_path, node_id, param_name, visible):
         data = self.settingsManager.get("workflow_param_visibility", {})
         if workflow_path not in data:
             data[workflow_path] = {}
-        data[workflow_path][param_name] = visible
+        if node_id not in data[workflow_path]:
+            data[workflow_path][node_id] = {}
+        data[workflow_path][node_id][param_name] = visible
         self.settingsManager.set("workflow_param_visibility", data)
         self.settingsManager.save()
 
@@ -1657,6 +1781,114 @@ class MainWindow(QMainWindow, ShotManager):
                 except Exception as e:
                     print(f"Error loading plugin {modulename}: {e}")
         sys.path.pop(0)
+
+    def extendClip(self, idx):
+        """
+        Extends the current project by creating a new shot based on the last shot's
+        last workflow's last video output or image. It adds the currently selected
+        video workflow to the new shot and prompts the user to select which input
+        parameter should be set to the last output. It also updates the UI to reflect
+        the new shot and ensures proper result tracking and preview.
+        """
+        if not self.shots:
+            QMessageBox.warning(self, "Warning", "No shots available to extend from.")
+            return
+
+        last_shot = self.shots[idx]
+        if not last_shot.workflows:
+            QMessageBox.warning(self, "Warning", "The last shot has no workflows to extend from.")
+            return
+
+        last_workflow = last_shot.workflows[-1]
+        if last_workflow.isVideo:
+            if not last_shot.videoVersions:
+                QMessageBox.warning(self, "Warning", "The last shot has no video outputs to extend from.")
+                return
+            last_output = last_shot.videoVersions[-1]
+        else:
+            if not last_shot.imageVersions:
+                QMessageBox.warning(self, "Warning", "The last shot has no image outputs to extend from.")
+                return
+            last_output = last_shot.imageVersions[-1]
+
+        success, last_frame = extract_frame(last_output)
+        if success:
+
+            # Create a new shot by deep copying the last shot
+            new_shot = copy.deepcopy(last_shot)
+            new_shot.name = f"{last_shot.name} - Extended"
+            # Reset paths and versions for the new shot
+            new_shot.stillPath = ""
+            new_shot.videoPath = ""
+            new_shot.imageVersions = []
+            new_shot.videoVersions = []
+            new_shot.currentImageVersion = -1
+            new_shot.currentVideoVersion = -1
+            new_shot.lastStillSignature = ""
+            new_shot.lastVideoSignature = ""
+
+            # Add the currently selected video workflow to the new shot
+            # Assuming the last workflow is the currently selected one
+            selected_workflow = last_workflow
+            new_workflow = copy.deepcopy(selected_workflow)
+            new_workflow.enabled = True  # Ensure the workflow is enabled
+            new_shot.workflows.append(new_workflow)
+
+            # Append the new shot to the shots list
+            self.shots.append(new_shot)
+            self.updateList()
+
+            # Select the new shot in the list widget
+            new_shot_idx = len(self.shots) - 1
+            self.currentShotIndex = new_shot_idx
+            self.listWidget.setCurrentRow(new_shot_idx)
+            self.fillDock()
+
+            # Prompt the user to select which input parameter to set to the last output
+            params = new_workflow.parameters.get("params", [])
+            visible_params = [param for param in params if param.get("visible", True)]
+            if not visible_params:
+                QMessageBox.information(self, "Info", "The workflow has no visible parameters to set.")
+                return
+
+            param_names = [param["name"] for param in visible_params]
+            param, ok = QInputDialog.getItem(
+                self,
+                "Select Input Parameter",
+                "Which input parameter should be set to the last output?",
+                param_names,
+                0,
+                False
+            )
+
+            if ok and param:
+                # Find the selected parameter and set its value to the last output
+                for p in params:
+                    if p["name"] == param:
+                        p["value"] = last_frame
+                        break
+                QMessageBox.information(
+                    self,
+                    "Info",
+                    f"Parameter '{param}' has been set to '{last_output}'."
+                )
+                self.saveCurrentWorkflowParamsForShot(new_workflow)
+                self.refreshParamsList(new_shot)
+
+            # Emit signals to update the preview dock
+            self.shotSelected.emit(new_shot_idx)
+            self.workflowSelected.emit(new_shot_idx, len(new_shot.workflows) - 1)
+
+            # # Update the preview dock to show the new workflow's output
+            # self.previewDock.updatePreview(new_shot_idx, len(new_shot.workflows) - 1)
+
+            # Optionally, automatically start rendering the new shot
+            # Uncomment the following lines if desired
+            # self.renderQueue.append(new_shot_idx)
+            # self.startNextRender()
+        else:
+            QMessageBox.warning(self, "Error", last_frame)
+
     def cleanUp(self):
         self.settingsManager.save()
         self.stopComfy()
@@ -1669,8 +1901,11 @@ class MainWindow(QMainWindow, ShotManager):
                 "Do you want to save the project before exiting?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
             )
-            if reply in [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]:
+            if reply in [QMessageBox.StandardButton.Yes]:
                 self.saveProject()
+                self.cleanUp()
+                event.accept()
+            elif reply == QMessageBox.StandardButton.No:
                 self.cleanUp()
                 event.accept()
             else:

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 import os
+from typing import List
+
 from qtpy.QtCore import (
     Qt,
     QMimeData,
@@ -31,6 +33,8 @@ from qtpy.QtWidgets import (
     QListView
 )
 
+from comfystudio.sdmodules.dataclasses import Shot
+
 class ReorderableListWidget(QWidget):
     """
     A Reorderable ListWidget that behaves similarly to a DaVinci Resolve style hover-scrub:
@@ -39,8 +43,8 @@ class ReorderableListWidget(QWidget):
      - In/Out points can be set by pressing 'I' or 'O' while hovering over an item
      - Zoom slider at top to control icon size
      - Items can be drag-reordered internally
-     - Now also supports toggling between a "Grid" (IconMode) and "List" (ListMode) view
-       and ensures the preview (icon) occupies the whole item area for hover scrubbing.
+     - Supports toggling between a "Grid" (IconMode) and "List" (ListMode) view
+       and ensures the preview (icon) maintains aspect ratio and shot details are shown.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -75,7 +79,7 @@ class ReorderableListWidget(QWidget):
 
         # View Mode Toggle Button
         self.view_switch_button = QPushButton("Switch to List View")
-        self.view_switch_button.setFixedWidth(120)
+        self.view_switch_button.setFixedWidth(150)
         self.view_switch_button.clicked.connect(self.onViewModeSwitch)
         self.slider_layout.addWidget(self.view_switch_button)
 
@@ -83,7 +87,7 @@ class ReorderableListWidget(QWidget):
 
         # List Widget
         self.listWidget = HoverScrubList(self)
-        self.listWidget.setViewMode(QListWidget.IconMode)
+        self.listWidget.setViewMode(QListView.IconMode)
         self.listWidget.setFlow(QListWidget.LeftToRight)
         self.listWidget.setWrapping(True)
         self.listWidget.setResizeMode(QListWidget.Adjust)
@@ -116,7 +120,7 @@ class ReorderableListWidget(QWidget):
 
     def onViewModeSwitch(self):
         """
-        Toggle between a "grid" (IconMode) and a "list" (ListMode) view.
+        Toggle between a "Grid" (IconMode) and a "List" (ListMode) view.
         """
         if self.listWidget.viewMode() == QListView.IconMode:
             # Switch to List Mode
@@ -130,6 +134,8 @@ class ReorderableListWidget(QWidget):
             self.listWidget.setFlow(QListView.LeftToRight)
             self.listWidget.setWrapping(True)
             self.view_switch_button.setText("Switch to List View")
+        # Trigger a repaint to adjust layout
+        self.listWidget.viewport().update()
 
     def onZoomChanged(self, value):
         """
@@ -141,8 +147,13 @@ class ReorderableListWidget(QWidget):
         spacing = max(int(10 * value / 100), 5)
         self.listWidget.setSpacing(spacing)
         # Also adjust grid size so the item area expands to match the icon
-        self.listWidget.setGridSize(QSize(icon_size.width() + spacing,
-                                          icon_size.height() + spacing))
+        if self.listWidget.viewMode() == QListView.IconMode:
+            self.listWidget.setGridSize(QSize(icon_size.width() + spacing,
+                                             icon_size.height() + spacing))
+        else:
+            # In ListMode, set grid size to accommodate image and text
+            self.listWidget.setGridSize(QSize(self.listWidget.viewport().width(),
+                                             icon_size.height() + spacing + 50))  # 50 for text
 
     def mouseMoveEvent(self, event):
         # Convert global position to listWidget coords
@@ -200,9 +211,7 @@ class ReorderableListWidget(QWidget):
 
     def addItem(self, icon, label, shot):
         """
-        By default, we still set the label text. Note that we override painting
-        to fill the whole item with the pixmap. The text won't be visible unless
-        you customize the painting code to include it. We keep it here for compatibility.
+        Add a new Shot item to the list.
         """
         item = QListWidgetItem(icon, label)
         item.setData(Qt.ItemDataRole.UserRole, shot)
@@ -212,7 +221,7 @@ class ReorderableListWidget(QWidget):
     def clearItems(self):
         self.listWidget.clear()
 
-    def updateItems(self, shots):
+    def updateItems(self, shots: List[Shot]):
         self.clearItems()
         for i, shot in enumerate(shots):
             # The getShotIcon method is assumed to be in the parent_window
@@ -262,8 +271,8 @@ class HoverScrubList(QListWidget):
     """
     Subclass of QListWidget to handle painting a 'timeline handle' or
     'hover fraction' marker, in the style of a DaVinci Resolve hover-scrub.
-    We override paintEvent to draw the entire pixmap scaled to the item's rectangle
-    so that the preview occupies the whole area, in both Icon (grid) and List modes.
+    Additionally, it draws a prominent border around selected items and
+    displays shot details on the right in ListMode.
     """
     def __init__(self, reorderable_parent):
         super().__init__()
@@ -301,17 +310,13 @@ class HoverScrubList(QListWidget):
 
     def paintEvent(self, event):
         """
-        We do our own painting so that the entire item rectangle is filled
-        by the scaled pixmap (the 'preview'), and then we draw the hover-scrub
-        handle + in/out markers on top.
+        Custom paint event to:
+         - Draw each item's icon with maintained aspect ratio.
+         - Draw shot details on the right in ListMode.
+         - Draw a prominent border around selected items.
+         - Draw hover-scrub handles and in/out points.
         """
         painter = QPainter(self.viewport())
-
-        # We skip the default painting of icons & text so that
-        # our custom pixmap can fill the entire item area.
-        # Comment out the line below if you *do* want the default
-        # painting (which can show selection highlight, etc.).
-        # super().paintEvent(event)
 
         for i in range(self.count()):
             item = self.item(i)
@@ -319,38 +324,113 @@ class HoverScrubList(QListWidget):
             if not itemRect.isValid():
                 continue
 
-            # Draw the item icon scaled to fill its entire rect
+            # Determine if the item is selected
+            is_selected = item.isSelected()  # Corrected line
+
+            # Draw background if selected
+            if is_selected:
+                painter.fillRect(itemRect, QColor(200, 200, 255, 100))  # Light blue overlay
+
+            # Draw the item icon scaled with aspect ratio
             pixmap = item.icon().pixmap(self.iconSize())
             if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(
-                    itemRect.size(),
-                    Qt.IgnoreAspectRatio,    # fill the entire rect
-                    Qt.SmoothTransformation
-                )
-                painter.drawPixmap(itemRect, scaled_pixmap, scaled_pixmap.rect())
+                if self.viewMode() == QListWidget.IconMode:
+                    scaled_pixmap = pixmap.scaled(
+                        itemRect.size(),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    # Center the pixmap
+                    x = itemRect.x() + (itemRect.width() - scaled_pixmap.width()) // 2
+                    y = itemRect.y() + (itemRect.height() - scaled_pixmap.height()) // 2
+                    painter.drawPixmap(x, y, scaled_pixmap)
+                else:
+                    # ListMode: Allocate left part for image and right for details
+                    image_width = int(itemRect.height() * 16 / 9)  # Assuming 16:9 aspect ratio
+                    image_rect = QRect(itemRect.x(), itemRect.y(),
+                                       image_width, itemRect.height())
+                    scaled_pixmap = pixmap.scaled(
+                        image_rect.size(),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    # Center the pixmap vertically
+                    img_x = image_rect.x() + (image_rect.width() - scaled_pixmap.width()) // 2
+                    img_y = image_rect.y() + (image_rect.height() - scaled_pixmap.height()) // 2
+                    painter.drawPixmap(img_x, img_y, scaled_pixmap)
 
-            # Now draw a red hover-scrub handle if we have a fraction
+                    # Draw shot details on the right
+                    shot: Shot = item.data(Qt.ItemDataRole.UserRole)
+                    if shot:
+                        details_x = image_rect.right() + 10
+                        details_y = itemRect.y() + 10
+                        details_width = itemRect.width() - image_rect.width() - 20
+                        details_height = itemRect.height() - 20
+
+                        # Prepare the text
+                        details_text = f"Name: {shot.name}\n"
+                        details_text += f"Video: {shot.videoPath}\n"
+                        details_text += f"Still: {shot.stillPath}\n"
+
+                        # Optionally add more details excluding 'params'
+                        if shot.workflows:
+                            details_text += f"Workflows: {len(shot.workflows)}\n"
+
+                        # Draw the text
+                        painter.setPen(Qt.black)
+                        painter.drawText(QRect(details_x, details_y,
+                                               details_width, details_height),
+                                         Qt.TextFlag.TextWordWrap, details_text)
+
+            # Draw a red hover-scrub handle if we have a fraction
             item_id = id(item)
             fraction = self.reorderable_parent.hover_fraction_map.get(item_id, None)
             if fraction is not None:
-                handle_x = int(itemRect.x() + itemRect.width() * fraction)
-                painter.setPen(QPen(QColor(255, 0, 0), 3))
-                painter.drawLine(handle_x, itemRect.y(),
-                                 handle_x, itemRect.y() + itemRect.height())
+                if self.viewMode() == QListWidget.IconMode:
+                    handle_x = int(itemRect.x() + itemRect.width() * fraction)
+                    painter.setPen(QPen(QColor(255, 0, 0), 3))
+                    painter.drawLine(handle_x, itemRect.y(),
+                                     handle_x, itemRect.y() + itemRect.height())
+                else:
+                    # In ListMode, handle is relative to the image area
+                    image_width = int(itemRect.height() * 16 / 9)
+                    handle_x = int(itemRect.x() + image_width * fraction)
+                    painter.setPen(QPen(QColor(255, 0, 0), 2))
+                    painter.drawLine(handle_x, itemRect.y(),
+                                     handle_x, itemRect.y() + itemRect.height())
 
             # Draw in/out markers if any
             in_frac = self.reorderable_parent.in_point_map.get(item_id, None)
             if in_frac is not None:
-                ix = int(itemRect.x() + itemRect.width() * in_frac)
-                painter.drawEllipse(ix - 3,
-                                    itemRect.y() + itemRect.height() // 2 - 3,
-                                    6, 6)
+                if self.viewMode() == QListWidget.IconMode:
+                    ix = int(itemRect.x() + itemRect.width() * in_frac)
+                else:
+                    image_width = int(itemRect.height() * 16 / 9)
+                    ix = int(itemRect.x() + image_width * in_frac)
+                painter.setBrush(QColor(0, 255, 0))  # Green
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(ix - 4, itemRect.y() + itemRect.height() // 2 - 4,
+                                    8, 8)
 
             out_frac = self.reorderable_parent.out_point_map.get(item_id, None)
             if out_frac is not None:
-                ox = int(itemRect.x() + itemRect.width() * out_frac)
-                painter.drawEllipse(ox - 3,
-                                    itemRect.y() + itemRect.height() // 2 - 3,
-                                    6, 6)
+                if self.viewMode() == QListWidget.IconMode:
+                    ox = int(itemRect.x() + itemRect.width() * out_frac)
+                else:
+                    image_width = int(itemRect.height() * 16 / 9)
+                    ox = int(itemRect.x() + image_width * out_frac)
+                painter.setBrush(QColor(255, 165, 0))  # Orange
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(ox - 4, itemRect.y() + itemRect.height() // 2 - 4,
+                                    8, 8)
+
+            # Draw a prominent border if selected
+            if is_selected:
+                pen = QPen(QColor(0, 120, 215), 3)  # Bright blue border
+                painter.setPen(pen)
+                painter.drawRect(itemRect.adjusted(1, 1, -2, -2))  # Adjust to fit inside
 
         painter.end()
+
+    def sizeHint(self):
+        return super().sizeHint()
