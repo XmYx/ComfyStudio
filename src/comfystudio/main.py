@@ -2,7 +2,8 @@
 import sys
 
 from qtpy.QtWidgets import (
-    QApplication
+    QApplication,
+    QStyleFactory
 )
 
 from comfystudio.sdmodules.mainwindow import MainWindow
@@ -10,6 +11,7 @@ from comfystudio.sdmodules.mainwindow import MainWindow
 def main():
     from comfystudio.sdmodules.qss import qss
     app = QApplication(sys.argv)
+    # app.setStyle(QStyleFactory.create("Fusion"))
     app.setStyleSheet(qss)
     window = MainWindow()
     window.show()

@@ -7,13 +7,16 @@ import random
 import subprocess
 import sys
 import tempfile
-import threading
+
 import urllib
 from typing import List, Dict
 
 import requests
+
 from qtpy import QtCore
+
 from qtpy.QtGui import QCursor
+
 from qtpy.QtWidgets import (
     QTextEdit,
     QMainWindow,
@@ -27,7 +30,6 @@ from qtpy.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QDockWidget,
-    QMenuBar,
     QPushButton,
     QLabel,
     QDialog,
@@ -40,14 +42,19 @@ from qtpy.QtWidgets import (
     QGroupBox,
     QScrollArea,
     QInputDialog,
-    QMenu, QFrame, QApplication
+    QMenu,
+    QFrame,
+    QApplication,
+    QSplitter
 )
+
 from qtpy.QtCore import (
     Qt,
     QPoint,
     QObject,
     Signal,
-    Slot
+    Slot,
+    QThread
 )
 from qtpy.QtGui import (
     QAction
@@ -61,7 +68,7 @@ from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
 from comfystudio.sdmodules.shot_manager import ShotManager
 from comfystudio.sdmodules.videotools import extract_frame
 from comfystudio.sdmodules.widgets import ReorderableListWidget
-from comfystudio.sdmodules.worker import RenderWorker
+from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
 
 
 class EmittingStream(QObject):
@@ -101,11 +108,14 @@ class MainWindow(QMainWindow, ShotManager):
         self.setWindowTitle(self.localization.translate("app_title", default="Cinema Shot Designer"))
 
         self.shots: List[Shot] = []
+        self.lastSelectedWorkflowIndex = {}
         self.currentShotIndex: int = -1
 
         self.renderQueue = []  # We'll store shotIndices to render
         self.activeWorker = None  # The QThread worker checking results
-
+        self.comfy_thread = None
+        self.comfy_worker = None
+        self.comfy_running = False
         # For progressive workflow rendering
         self.workflowQueue = {}   # Maps shotIndex -> list of (workflowIndex) to process
         self.shotInProgress = -1  # The shot we are currently processing
@@ -176,16 +186,6 @@ class MainWindow(QMainWindow, ShotManager):
         # Params management UI
         self.initParamsTab()
 
-        # Video preview
-        # self.videoWidget = QVideoWidget()
-        # self.dockLayout.addWidget(self.videoWidget)
-        #
-        # self.player = QMediaPlayer()
-        # self.audioOutput = QAudioOutput()
-        # self.player.setAudioOutput(self.audioOutput)
-        # self.player.setVideoOutput(self.videoWidget)
-
-
         self.dock.setWidget(self.dockContents)
 
         self.previewDock = ShotPreviewDock(self)
@@ -201,81 +201,68 @@ class MainWindow(QMainWindow, ShotManager):
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
 
     def initWorkflowsTab(self):
-        """
-        Makes the entire workflow selection portion collapsible within a group,
-        but expanded by default.
-        """
         layout = self.workflowsLayout
 
-        # -- 1) Collapsible group box to hold workflow selection (expanded by default) --
         self.workflowGroupBox = QGroupBox(
-            self.localization.translate("workflow_selection", default="Workflow Selection"))
+            self.localization.translate("workflow_selection", default="Workflow Selection")
+        )
         self.workflowGroupBox.setCheckable(True)
-        self.workflowGroupBox.setChecked(True)  # Not collapsed by default
+        self.workflowGroupBox.setChecked(True)
         groupLayout = QVBoxLayout(self.workflowGroupBox)
         self.workflowGroupBox.setLayout(groupLayout)
 
         def onWorkflowsToggled(checked):
-            """
-            When unchecked, disable/hide all children; when checked, enable/show them.
-            QGroupBox 'checkable' doesn't literally collapse the widget;
-            instead it enables/disables its children.
-            If you want them hidden, you can manually hide/show.
-            """
-            # Here we just rely on enabling/disabling (the default QGroupBox behavior).
-            # If you prefer to visually hide them, comment out the enabling code
-            # and show/hide instead.
             for w in self.workflowGroupBox.children():
-                if w is not groupLayout:  # skip the layout
-                    # w.setEnabled(checked)
+                if w is not groupLayout:
                     if hasattr(w, "setVisible"):
                         w.setVisible(not w.isVisible())
 
         self.workflowGroupBox.toggled.connect(onWorkflowsToggled)
 
-        # -- 2) Comboboxes for adding image/video workflows --
         comboLayout = QHBoxLayout()
-
-        # Image Workflow Section
-        self.imageWorkflowLabel = QLabel(self.localization.translate("label_image_workflow", default="Image Workflow:"))
+        self.imageWorkflowLabel = QLabel(
+            self.localization.translate("label_image_workflow", default="Image Workflow:")
+        )
         self.imageWorkflowCombo = QComboBox()
         self.imageWorkflowCombo.setToolTip(
-            self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add"))
+            self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add")
+        )
         self.addImageWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_image_workflow", default="Add Image Workflow"))
+            self.localization.translate("button_add_image_workflow", default="Add Image Workflow")
+        )
         self.addImageWorkflowBtn.setToolTip(
             self.localization.translate("tooltip_add_image_workflow",
-                                        default="Add the selected Image Workflow to the shot"))
+                                        default="Add the selected Image Workflow to the shot")
+        )
         self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
-
         comboLayout.addWidget(self.imageWorkflowLabel)
         comboLayout.addWidget(self.imageWorkflowCombo)
         comboLayout.addWidget(self.addImageWorkflowBtn)
-        comboLayout.addSpacing(20)  # Optional spacing
-
-        # Video Workflow Section
-        self.videoWorkflowLabel = QLabel(self.localization.translate("label_video_workflow", default="Video Workflow:"))
+        comboLayout.addSpacing(20)
+        self.videoWorkflowLabel = QLabel(
+            self.localization.translate("label_video_workflow", default="Video Workflow:")
+        )
         self.videoWorkflowCombo = QComboBox()
         self.videoWorkflowCombo.setToolTip(
-            self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add"))
+            self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add")
+        )
         self.addVideoWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_video_workflow", default="Add Video Workflow"))
+            self.localization.translate("button_add_video_workflow", default="Add Video Workflow")
+        )
         self.addVideoWorkflowBtn.setToolTip(
             self.localization.translate("tooltip_add_video_workflow",
-                                        default="Add the selected Video Workflow to the shot"))
+                                        default="Add the selected Video Workflow to the shot")
+        )
         self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
-
         comboLayout.addWidget(self.videoWorkflowLabel)
         comboLayout.addWidget(self.videoWorkflowCombo)
         comboLayout.addWidget(self.addVideoWorkflowBtn)
-
         groupLayout.addLayout(comboLayout)
 
-        # -- 3) Workflow List and label --
         self.workflowListLabel = QLabel(
-            self.localization.translate("label_workflow_list", default="Available Workflows:"))
+            self.localization.translate("label_workflow_list", default="Available Workflows:")
+        )
         groupLayout.addWidget(self.workflowListLabel)
-
         self.workflowListWidget = QListWidget()
         self.workflowListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.workflowListWidget.itemClicked.connect(self.onWorkflowItemClicked)
@@ -283,53 +270,54 @@ class MainWindow(QMainWindow, ShotManager):
         self.workflowListWidget.customContextMenuRequested.connect(self.onWorkflowListContextMenu)
         groupLayout.addWidget(self.workflowListWidget)
 
-        # -- 4) Buttons (Remove Workflow, etc.) --
         buttonsLayout = QHBoxLayout()
         self.removeWorkflowBtn = QPushButton(
-            self.localization.translate("button_remove_workflow", default="Remove Workflow"))
+            self.localization.translate("button_remove_workflow", default="Remove Workflow")
+        )
         self.removeWorkflowBtn.setToolTip(
             self.localization.translate("tooltip_remove_workflow",
-                                        default="Remove the selected Workflow from the shot"))
+                                        default="Remove the selected Workflow from the shot")
+        )
         self.removeWorkflowBtn.clicked.connect(self.removeWorkflowFromShot)
         buttonsLayout.addWidget(self.removeWorkflowBtn)
-
         groupLayout.addLayout(buttonsLayout)
 
-        # Toggle Hidden Parameters
         self.toggleHiddenParamsBtn = QPushButton(
-            self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params"))
+            self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params")
+        )
         self.toggleHiddenParamsBtn.setToolTip(
             self.localization.translate("tooltip_toggle_hidden_params",
-                                        default="Toggle the visibility of hidden parameters"))
+                                        default="Toggle the visibility of hidden parameters")
+        )
         self.toggleHiddenParamsBtn.clicked.connect(self.toggleHiddenParams)
         groupLayout.addWidget(self.toggleHiddenParamsBtn)
 
-        # Finally, add the group box to the main workflows layout
-        layout.addWidget(self.workflowGroupBox)
-
-        # -- 5) Parameters area (always visible) --
         self.workflowParamsGroup = QGroupBox(
-            self.localization.translate("group_workflow_parameters", default="Workflow Parameters"))
+            self.localization.translate("group_workflow_parameters", default="Workflow Parameters")
+        )
         self.workflowParamsLayout = QFormLayout(self.workflowParamsGroup)
         self.workflowParamsGroup.setLayout(self.workflowParamsLayout)
         self.workflowParamsGroup.setEnabled(False)
-
         self.workflowParamsScroll = QScrollArea()
         self.workflowParamsScroll.setWidgetResizable(True)
         self.workflowParamsScroll.setWidget(self.workflowParamsGroup)
 
-        layout.addWidget(self.workflowParamsScroll)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(20)
+        splitter.addWidget(self.workflowGroupBox)
+        splitter.addWidget(self.workflowParamsScroll)
 
-    # def onWorkflowGroupToggled(self, expanded: bool):
-    #     """
-    #     Slot called when the QGroupBox (workflowGroup) is toggled.
-    #     If expanded is False, we hide the internal widgets; if True, show them.
-    #     """
-    #     # When a checkable QGroupBox is unchecked, it usually disables its contents
-    #     # but doesn't fully hide/collapse them. We can manually hide or show them here if desired:
-    #     for w in (self.workflowListLabel, self.workflowListWidget,
-    #               self.removeWorkflowBtn, self.toggleHiddenParamsBtn):
-    #         w.setVisible(expanded)
+        # Set minimum widths to prevent widgets from being hidden
+        self.workflowGroupBox.setMinimumWidth(200)  # Adjust this value as needed
+        self.workflowParamsScroll.setMinimumWidth(300)  # Adjust this value as needed
+
+        # Optionally, set initial sizes to distribute space appropriately
+        splitter.setSizes([200, 800])  # Adjust initial sizes based on your preference
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        layout.addWidget(splitter)
+
 
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)
@@ -442,6 +430,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct = QAction(self)
         self.saveDefaultsAct = QAction(self)
         self.openSettingsAct = QAction(self)
+        self.setupComfyAct = QAction(self)
 
         # Set initial texts
         self.updateMenuBarTexts()
@@ -456,6 +445,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct.triggered.connect(self.onRenderAll)
         self.saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
         self.openSettingsAct.triggered.connect(self.showSettingsDialog)
+        self.setupComfyAct.triggered.connect(self.setup_custom_nodes)
 
         # Add actions to File Menu
         self.fileMenu.addAction(self.newAct)
@@ -470,6 +460,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Add actions to Settings Menu
         self.settingsMenu.addAction(self.openSettingsAct)
+        self.settingsMenu.addAction(self.setupComfyAct)
 
         # Add Menus to Menu Bar
         self.menuBar().addMenu(self.fileMenu)
@@ -480,7 +471,7 @@ class MainWindow(QMainWindow, ShotManager):
         # self.toolBar().clear()
 
         # Initialize Toolbar
-        self.toolbar = self.addToolBar("Main Toolbar")
+        self.toolbar = self.addToolBar(self.localization.translate("toolbar_label", default="Main Toolbar"))
         self.toolbar.setObjectName("main_toolbar")
 
         # Initialize Actions
@@ -565,6 +556,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.saveDefaultsAct.setText(
             self.localization.translate("menu_save_defaults", default="Save Workflow Defaults"))
         self.openSettingsAct.setText(self.localization.translate("menu_open_settings", default="Open Settings"))
+        self.setupComfyAct.setText(self.localization.translate("menu_setup_comfy", default="Install/Update Custom Nodes"))
 
     def updateToolBarTexts(self):
         # Update Toolbar Name if needed (optional)
@@ -728,7 +720,7 @@ class MainWindow(QMainWindow, ShotManager):
         elif action == extendAction:
             for idx in sorted(valid_indices):
                 self.extendClip(idx)
-        elif action and action.text() == "Merge Clips":
+        elif action  == mergeAction:
             self.mergeClips(valid_indices)
 
     def mergeClips(self, selected_indices):
@@ -832,6 +824,7 @@ class MainWindow(QMainWindow, ShotManager):
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
 
     def onSelectionChanged(self):
+        self.clearDock()
         try:
             self.player.stop()
         except:
@@ -842,6 +835,18 @@ class MainWindow(QMainWindow, ShotManager):
             if idx != -1:
                 self.currentShotIndex = idx
                 self.fillDock()
+
+                if idx in self.lastSelectedWorkflowIndex:
+                    last_wf_idx = self.lastSelectedWorkflowIndex[idx]
+                    shot = self.shots[idx]
+                    # Ensure last_wf_idx is still valid for the shot
+                    if 0 <= last_wf_idx < len(shot.workflows):
+                        # Reselect that workflow in the workflowListWidget
+                        self.workflowListWidget.setCurrentRow(last_wf_idx)
+                        # Make sure the parameter UI is updated
+                        item = self.workflowListWidget.item(last_wf_idx)
+                        if item:
+                            self.onWorkflowItemClicked(item)
                 self.shotSelected.emit(idx)
             else:
                 self.currentShotIndex = -1
@@ -984,6 +989,7 @@ class MainWindow(QMainWindow, ShotManager):
             shot = self.shots[self.currentShotIndex]
             wfIndex = shot.workflows.index(workflow) if workflow in shot.workflows else -1
             if wfIndex != -1:
+                self.lastSelectedWorkflowIndex[self.currentShotIndex] = wfIndex
                 self.workflowSelected.emit(self.currentShotIndex, wfIndex)
 
         # Clear existing rows in the layout
@@ -1183,12 +1189,6 @@ class MainWindow(QMainWindow, ShotManager):
             return
 
         shot = self.shots[self.currentShotIndex]
-
-        # Prevent adding the same workflow twice
-        # for wf in shot.workflows:
-        #     if wf.path == workflow_path and wf.isVideo == isVideo:
-        #         QMessageBox.information(self, "Info", "Workflow already added to this shot.")
-        #         return
 
         try:
             # Load the workflow JSON
@@ -1964,31 +1964,96 @@ class MainWindow(QMainWindow, ShotManager):
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to import shots: {e}")
 
+
     def startComfy(self):
+        """
+        Launches the ComfyUI process in a separate thread using ComfyWorker.
+        Ensures that the UI remains responsive and logs are captured.
+        """
+        if self.comfy_running:
+            QMessageBox.information(self, "Info", "ComfyUI is already running.")
+            return
+
         py_path = self.settingsManager.get("comfy_py_path")
         main_path = self.settingsManager.get("comfy_main_path")
         if py_path and main_path:
-            try:
-                self.comfy_process = subprocess.Popen(
-                    [py_path, main_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True
-                )
-                self.statusMessage.setText("Comfy started.")
-                self.appendLog("Comfy process started.")
-                self.comfy_stdout_thread = threading.Thread(target=self.read_stream, args=(self.comfy_process.stdout,))
-                self.comfy_stderr_thread = threading.Thread(target=self.read_stream, args=(self.comfy_process.stderr,))
-                self.comfy_stdout_thread.daemon = True
-                self.comfy_stderr_thread.daemon = True
-                self.comfy_stdout_thread.start()
-                self.comfy_stderr_thread.start()
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to start Comfy: {e}")
+            # Create the worker and thread
+            self.comfy_thread = QThread()
+            self.comfy_worker = ComfyWorker(py_path=py_path, main_path=main_path)
+            self.comfy_worker.moveToThread(self.comfy_thread)
+
+            # Connect signals and slots
+            self.comfy_thread.started.connect(self.comfy_worker.run)
+            self.comfy_worker.log_message.connect(self.appendLog)
+            self.comfy_worker.error.connect(self.appendLog)
+            self.comfy_worker.finished.connect(self.comfy_thread.quit)
+            self.comfy_worker.finished.connect(self.comfy_worker.deleteLater)
+            self.comfy_thread.finished.connect(self.comfy_thread.deleteLater)
+            self.comfy_worker.finished.connect(lambda: self.onComfyFinished())
+
+            # Start the thread
+            self.comfy_thread.start()
+            self.comfy_running = True
+            self.statusMessage.setText("ComfyUI started.")
+            self.appendLog("ComfyUI process started.")
         else:
             QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
+    def onComfyFinished(self):
+        """
+        Handles the completion of the ComfyUI process.
+        """
+        self.comfy_running = False
+        self.statusMessage.setText("ComfyUI stopped.")
+        self.appendLog("ComfyUI process has stopped.")
+
+
+    def setup_custom_nodes(self):
+        """
+        Initiates the setup of custom nodes in a separate thread to keep the UI responsive.
+        """
+        # Define the configuration file path
+        config_file = os.path.join(os.path.dirname(__file__), "..", "defaults", "custom_nodes.json")
+
+        # Retrieve paths from settingsManager
+        comfy_exec_path = self.settingsManager.get("comfy_main_path")
+        venv_python_path = self.settingsManager.get("comfy_py_path")
+
+        if not comfy_exec_path:
+            QMessageBox.warning(self, "Error", "ComfyUI main.py path not set in settings.")
+            return
+
+        if not venv_python_path:
+            QMessageBox.warning(self, "Error", "ComfyUI virtual environment path not set in settings.")
+            return
+
+        # Determine the virtual environment directory
+        if os.path.isfile(venv_python_path):
+            venv_dir = os.path.dirname(os.path.dirname(venv_python_path))
+        else:
+            venv_dir = os.path.dirname(os.path.dirname(venv_python_path))  # Fallback
+
+        # Create the worker and thread
+        self.custom_nodes_thread = QThread()
+        self.custom_nodes_worker = CustomNodesSetupWorker(
+            config_file=config_file,
+            venv_path=venv_dir,
+            comfy_exec_path=comfy_exec_path
+        )
+        self.custom_nodes_worker.moveToThread(self.custom_nodes_thread)
+
+        # Connect signals and slots
+        self.custom_nodes_thread.started.connect(self.custom_nodes_worker.run)
+        self.custom_nodes_worker.log_message.connect(self.appendLog)
+        self.custom_nodes_worker.finished.connect(self.custom_nodes_thread.quit)
+        self.custom_nodes_worker.finished.connect(self.custom_nodes_worker.deleteLater)
+        self.custom_nodes_thread.finished.connect(self.custom_nodes_thread.deleteLater)
+        self.custom_nodes_worker.finished.connect(lambda: QMessageBox.information(self, "Info", "Custom nodes setup completed."))
+
+        # Start the thread
+        self.custom_nodes_thread.start()
+
+        # Log the initiation
+        self.appendLog("Starting custom nodes setup...")
 
     def read_stream(self, stream):
         try:
@@ -2000,9 +2065,23 @@ class MainWindow(QMainWindow, ShotManager):
             self.logStream.write(f"Error reading stream: {e}")
 
     def stopComfy(self):
-        if hasattr(self, 'comfy_process'):
-            self.comfy_process.terminate()
-            self.statusMessage.setText("Comfy stopped.")
+        """
+        Signals the ComfyWorker to terminate the ComfyUI process.
+        Cleans up the thread and worker.
+        """
+        if self.comfy_running and self.comfy_worker:
+            try:
+                self.comfy_worker.stop()
+                self.comfy_running = False
+                self.statusMessage.setText("Stopping ComfyUI...")
+                self.appendLog("Stopping ComfyUI process...")
+                # The worker's 'finished' signal will handle further cleanup
+            except Exception as e:
+                self.statusMessage.setText(str(e))
+                self.appendLog(repr(e))
+        else:
+            QMessageBox.information(self, "Info", "ComfyUI is not running.")
+
     def loadWorkflows(self):
         base_dir = os.path.join(os.path.dirname(__file__), "workflows")
         image_dir = self.settingsManager.get("comfy_image_workflows", os.path.join(base_dir, "image"))

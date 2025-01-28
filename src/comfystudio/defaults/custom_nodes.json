@@ -1,0 +1,12 @@
+{
+    "custom_nodes": [
+        "https://github.com/kijai/ComfyUI-KJNodes",
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+        "https://github.com/chengzeyi/Comfy-WaveSpeed",
+        "https://github.com/cubiq/ComfyUI_essentials",
+        "https://github.com/WASasquatch/was-node-suite-comfyui",
+        "https://github.com/kijai/ComfyUI-MMAudio",
+        "https://github.com/logtd/ComfyUI-LTXTricks",
+        "https://github.com/Lightricks/ComfyUI-LTXVideo/"
+    ]
+}

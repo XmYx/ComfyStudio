@@ -79,6 +79,7 @@ class SettingsDialog(QDialog):
 
         self.lang_combo = QComboBox()
 
+
         self.languages = [
             ("Afrikaans", "af"),  # Afrikaans
             ("العربية", "ar"),  # Arabic
