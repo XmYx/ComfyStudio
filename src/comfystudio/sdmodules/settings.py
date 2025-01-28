@@ -144,6 +144,7 @@ class SettingsDialog(QDialog):
             ("Íslenska", "is"),  # Icelandic
             ("日本語", "jp"),  # Japanese
             ("한국어", "ko"),  # Korean
+            ("L33T", "lt"),
             ("Magyar", "hu"),  # Hungarian
             ("Nederlands", "nl"),  # Dutch
             ("Português", "pt"),  # Portuguese

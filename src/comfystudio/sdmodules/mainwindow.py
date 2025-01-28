@@ -1983,18 +1983,18 @@ class MainWindow(QMainWindow, ShotManager):
 
         last_shot = self.shots[idx]
         if not last_shot.workflows:
-            QMessageBox.warning(self, "Warning", "The last shot has no workflows to extend from.")
+            QMessageBox.warning(self, "Warning", self.localization.translate("warning_no_workflows_to_extend"))
             return
 
         last_workflow = last_shot.workflows[-1]
         if last_workflow.isVideo:
             if not last_shot.videoVersions:
-                QMessageBox.warning(self, "Warning", "The last shot has no video outputs to extend from.")
+                QMessageBox.warning(self, "Warning", self.localization.translate("warning_no_outputs_to_extend"))
                 return
             last_output = last_shot.videoVersions[-1]
         else:
             if not last_shot.imageVersions:
-                QMessageBox.warning(self, "Warning", "The last shot has no image outputs to extend from.")
+                QMessageBox.warning(self, "Warning", self.localization.translate("warning_no_image_to_extend"))
                 return
             last_output = last_shot.imageVersions[-1]
 

@@ -44,6 +44,7 @@
     "info_workflow_defaults_saved": "Defaults saved for workflow '{workflow}'.",
     "warning_no_workflows_to_extend": "The last shot has no workflows to extend from.",
     "warning_no_outputs_to_extend": "The last shot has no video outputs to extend from.",
+    "warning_no_image_to_extend": "The last shot has no image outputs to extend from.",
     "warning_no_shots_available": "No shots available to extend from.",
     "warning_no_workflows_selected": "Select at least two clips to merge.",
     "warning_no_valid_video_path": "Shot '{shot}' has no valid video path.",
@@ -73,5 +74,6 @@
     "button_switch_to_grid_view": "Switch to Grid View",
     "button_terminal": "Terminal",
     "tooltip_terminal": "Open the terminal window",
-    "label_language": "Language"
+    "label_language": "Language",
+    "app_title": "ComfyStudio"
 }
