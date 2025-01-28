@@ -30,24 +30,6 @@ class SettingsManager:
             "comfy_py_path": "",
             "comfy_main_path": "",
             "comfy_ip": "http://localhost:8188",
-            "default_shot_params": [],
-            "default_image_params": [],
-            "default_video_params": [
-                {
-                    "type": "image",
-                    "name": "Image",
-                    "value": "",
-                    "useShotImage": True,
-                    "nodeIDs": ["1"]
-                },
-                {
-                    "type": "video",
-                    "name": "Video",
-                    "value": "",
-                    "useShotVideo": True,
-                    "nodeIDs": ["2"]
-                },
-            ],
             "workflow_params": {}
         }
         self.load()
@@ -94,33 +76,8 @@ class SettingsDialog(QDialog):
         # Language Selection
         lang_layout = QHBoxLayout()
         lang_label = QLabel(self.localization.translate("label_language", default="Language:"))
-        self.lang_combo = QComboBox()
 
-        # self.languages = [
-        #     ("Afrikaans", "af"),  # Afrikaans
-        #     ("العربية", "ar"),  # Arabic
-        #     ("বাংলা", "bn"),  # Bengali
-        #     ("简体中文", "cn"),  # Chinese Simplified
-        #     ("繁體中文", "ct"),  # Chinese Traditional
-        #     ("Deutsch", "de"),
-        #     ("English", "en"),
-        #     ("Español", "es"),
-        #     ("Français", "fr"),
-        #     ("Frysk", "fy"),  # Frieslandic (West Frisian)
-        #     ("עברית", "he"),
-        #     ("हिन्दी", "hi"),  # Hindi
-        #     ("Italiano", "it"),  # Italian
-        #     ("Íslenska", "is"),  # Icelandic
-        #     ("Japanese", "jp"),
-        #     ("한국어", "ko"), # Korean
-        #     ("Magyar", "hu"),
-        #     ("Nederlands", "nl"),  # Dutch
-        #     ("Português", "pt"),  # Portuguese
-        #     ("Svenska", "sv"),
-        #     ("Українська", "ur"),  # Ukrainian
-        #     ("Русский", "ru"),  # Russian
-        #     ("தமிழ்", "ta"),  # Tamil
-        # ]
+        self.lang_combo = QComboBox()
 
         self.languages = [
             ("Afrikaans", "af"),  # Afrikaans

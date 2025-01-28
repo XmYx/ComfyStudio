@@ -12,6 +12,7 @@ import urllib
 from typing import List, Dict
 
 import requests
+from PyQt6 import QtCore
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import (
     QTextEdit,
@@ -123,7 +124,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.updateList()
 
         self.loadPlugins()
-
+        self.restoreWindowState()
 
     def setupLogging(self):
         log_handler = QtLogHandler(self.logStream)
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Dock for shot parameters
         self.dock = QDockWidget(self.localization.translate("shot_details"), self)
+        self.dock.setObjectName("shot_details_dock")
         self.dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
 
@@ -177,18 +179,19 @@ class MainWindow(QMainWindow, ShotManager):
         self.initParamsTab()
 
         # Video preview
-        self.videoWidget = QVideoWidget()
-        self.dockLayout.addWidget(self.videoWidget)
-
-        self.player = QMediaPlayer()
-        self.audioOutput = QAudioOutput()
-        self.player.setAudioOutput(self.audioOutput)
-        self.player.setVideoOutput(self.videoWidget)
+        # self.videoWidget = QVideoWidget()
+        # self.dockLayout.addWidget(self.videoWidget)
+        #
+        # self.player = QMediaPlayer()
+        # self.audioOutput = QAudioOutput()
+        # self.player.setAudioOutput(self.audioOutput)
+        # self.player.setVideoOutput(self.videoWidget)
 
 
         self.dock.setWidget(self.dockContents)
 
         self.previewDock = ShotPreviewDock(self)
+        self.previewDock.setObjectName("preview_dock")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.previewDock)
 
         self.createMenuBar()
@@ -437,6 +440,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Initialize Toolbar
         self.toolbar = self.addToolBar("Main Toolbar")
+        self.toolbar.setObjectName("main_toolbar")
 
         # Initialize Actions
         self.addShotBtn = QAction(self)
@@ -475,6 +479,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.logLabel = QLabel()
         self.terminalButton = QPushButton()
         self.terminalDock = QDockWidget()
+        self.terminalDock.setObjectName("terminal_dock")
         self.terminalTextEdit = QTextEdit()
 
         # Set initial texts
@@ -2076,11 +2081,30 @@ class MainWindow(QMainWindow, ShotManager):
         else:
             QMessageBox.warning(self, "Error", last_frame)
 
+    def restoreWindowState(self):
+        geometry_str = self.settingsManager.get("mainwindow_geometry", "")
+        if geometry_str:
+            self.restoreGeometry(QtCore.QByteArray.fromBase64(geometry_str.encode("utf-8")))
+        state_str = self.settingsManager.get("mainwindow_state", "")
+        if state_str:
+            self.restoreState(QtCore.QByteArray.fromBase64(state_str.encode("utf-8")))
+
+    def saveWindowState(self):
+        geometry_b64 = self.saveGeometry().toBase64().data().decode("utf-8")
+        self.settingsManager.set("mainwindow_geometry", geometry_b64)
+
+        state_b64 = self.saveState().toBase64().data().decode("utf-8")
+        self.settingsManager.set("mainwindow_state", state_b64)
+
+        self.settingsManager.save()
+
     def cleanUp(self):
         self.settingsManager.save()
         self.stopComfy()
 
     def closeEvent(self, event):
+        self.saveWindowState()
+
         if len(self.shots) > 0:
             reply = QMessageBox.question(
                 self,
