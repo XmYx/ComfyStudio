@@ -23,13 +23,14 @@ class LocalizationManager:
         self.current_language = language_code
 
     def translate(self, key, **kwargs):
-        text = self.translations.get(key, key)  # Fallback to key if not found
+        default = kwargs.get("default", key)
+        text = self.translations.get(key, default)  # Fallback to key if not found
         if kwargs:
             try:
                 text = text.format(**kwargs)
             except KeyError as e:
                 print(f"Missing placeholder in translation for key '{key}': {e}")
-        return kwargs.get("default", text)
+        return text
 
     def set_language(self, language_code):
         self.load_language(language_code)

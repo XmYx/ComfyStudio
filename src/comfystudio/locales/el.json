@@ -1,4 +1,3 @@
-```json
 {
     "menu_file": "Αρχείο",
     "menu_new_project": "Νέο Έργο",
@@ -76,4 +75,3 @@
     "tooltip_terminal": "Άνοιγμα παραθύρου τερματικού",
     "label_language": "Γλώσσα"
 }
-```

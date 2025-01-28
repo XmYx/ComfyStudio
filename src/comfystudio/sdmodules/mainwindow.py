@@ -61,6 +61,7 @@ from qtpy.QtGui import (
 )
 
 from comfystudio.sdmodules.aboutdialog import AboutDialog
+from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
 from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.localization import LocalizationManager
@@ -221,7 +222,9 @@ class MainWindow(QMainWindow, ShotManager):
 
         self.workflowGroupBox.toggled.connect(onWorkflowsToggled)
 
-        comboLayout = QHBoxLayout()
+        comboLayout_1 = QHBoxLayout()
+        comboLayout_2 = QHBoxLayout()
+
         self.imageWorkflowLabel = QLabel(
             self.localization.translate("label_image_workflow", default="Image Workflow:")
         )
@@ -230,39 +233,40 @@ class MainWindow(QMainWindow, ShotManager):
             self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add")
         )
         self.addImageWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_image_workflow", default="Add Image Workflow")
+            self.localization.translate("button_add_image_workflow", default="Add")
         )
         self.addImageWorkflowBtn.setToolTip(
             self.localization.translate("tooltip_add_image_workflow",
                                         default="Add the selected Image Workflow to the shot")
         )
         self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
-        comboLayout.addWidget(self.imageWorkflowLabel)
-        comboLayout.addWidget(self.imageWorkflowCombo)
-        comboLayout.addWidget(self.addImageWorkflowBtn)
-        comboLayout.addSpacing(20)
+        comboLayout_1.addWidget(self.imageWorkflowLabel)
+        comboLayout_1.addWidget(self.imageWorkflowCombo)
+        comboLayout_1.addWidget(self.addImageWorkflowBtn)
+        # comboLayout.addSpacing(20)
         self.videoWorkflowLabel = QLabel(
-            self.localization.translate("label_video_workflow", default="Video Workflow:")
+            self.localization.translate("label_video_workflow", default="Video:")
         )
         self.videoWorkflowCombo = QComboBox()
         self.videoWorkflowCombo.setToolTip(
             self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add")
         )
         self.addVideoWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_video_workflow", default="Add Video Workflow")
+            self.localization.translate("button_add_video_workflow", default="Add")
         )
         self.addVideoWorkflowBtn.setToolTip(
             self.localization.translate("tooltip_add_video_workflow",
                                         default="Add the selected Video Workflow to the shot")
         )
         self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
-        comboLayout.addWidget(self.videoWorkflowLabel)
-        comboLayout.addWidget(self.videoWorkflowCombo)
-        comboLayout.addWidget(self.addVideoWorkflowBtn)
-        groupLayout.addLayout(comboLayout)
+        comboLayout_2.addWidget(self.videoWorkflowLabel)
+        comboLayout_2.addWidget(self.videoWorkflowCombo)
+        comboLayout_2.addWidget(self.addVideoWorkflowBtn)
+        groupLayout.addLayout(comboLayout_1)
+        groupLayout.addLayout(comboLayout_2)
 
         self.workflowListLabel = QLabel(
-            self.localization.translate("label_workflow_list", default="Available Workflows:")
+            self.localization.translate("label_workflow_list", default="Assigned Workflows:")
         )
         groupLayout.addWidget(self.workflowListLabel)
         self.workflowListWidget = QListWidget()
@@ -285,7 +289,7 @@ class MainWindow(QMainWindow, ShotManager):
         groupLayout.addLayout(buttonsLayout)
 
         self.toggleHiddenParamsBtn = QPushButton(
-            self.localization.translate("button_toggle_hidden_params", default="Show/Hide Hidden Params")
+            self.localization.translate("button_toggle_hidden_params", default="Show/Hide All Params")
         )
         self.toggleHiddenParamsBtn.setToolTip(
             self.localization.translate("tooltip_toggle_hidden_params",
@@ -433,7 +437,9 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct = QAction(self)
         self.saveDefaultsAct = QAction(self)
         self.openSettingsAct = QAction(self)
+        self.setupComfyNodesAct = QAction(self)
         self.setupComfyAct = QAction(self)
+
 
         # Help Menu Actions
         self.userGuideAct = QAction(self)
@@ -452,7 +458,8 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct.triggered.connect(self.onRenderAll)
         self.saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
         self.openSettingsAct.triggered.connect(self.showSettingsDialog)
-        self.setupComfyAct.triggered.connect(self.setup_custom_nodes)
+        self.setupComfyNodesAct.triggered.connect(self.setup_custom_nodes)
+        self.setupComfyAct.triggered.connect(self.startComfyInstallerWizard)
 
         # Help Menu Actions Connections
         self.userGuideAct.triggered.connect(self.openUserGuide)
@@ -471,6 +478,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Add actions to Settings Menu
         self.settingsMenu.addAction(self.openSettingsAct)
+        self.settingsMenu.addAction(self.setupComfyNodesAct)
         self.settingsMenu.addAction(self.setupComfyAct)
 
         # Add actions to Help Menu
@@ -556,6 +564,9 @@ class MainWindow(QMainWindow, ShotManager):
         self.terminalDock.hide()
 
     def updateMenuBarTexts(self):
+
+        print("Updating menubar titles")
+        print("File Menu will be", self.localization.translate("menu_file", default="File"))
         # Update File Menu Title
         self.fileMenu.setTitle(self.localization.translate("menu_file", default="File"))
 
@@ -574,7 +585,8 @@ class MainWindow(QMainWindow, ShotManager):
         self.saveDefaultsAct.setText(
             self.localization.translate("menu_save_defaults", default="Save Workflow Defaults"))
         self.openSettingsAct.setText(self.localization.translate("menu_open_settings", default="Open Settings"))
-        self.setupComfyAct.setText(self.localization.translate("menu_setup_comfy", default="Install/Update Custom Nodes"))
+        self.setupComfyAct.setText(self.localization.translate("menu_setup_comfy_base", default="Install/Update ComfyUI"))
+        self.setupComfyNodesAct.setText(self.localization.translate("menu_setup_comfy", default="Install/Update Custom Nodes"))
         # Update Help Menu Actions Texts
         self.userGuideAct.setText(self.localization.translate("menu_user_guide", default="User Guide"))
         self.aboutAct.setText(self.localization.translate("menu_about", default="About"))
@@ -641,6 +653,12 @@ class MainWindow(QMainWindow, ShotManager):
     def openAboutDialog(self):
         about_dialog = AboutDialog(self)
         about_dialog.exec()
+    def startComfyInstallerWizard(self):
+        """
+        Launches the Comfy Installer Wizard to install/update ComfyUI and its dependencies.
+        """
+        wizard = ComfyInstallerWizard(parent=self, settings_manager=self.settingsManager, log_callback=self.appendLog)
+        wizard.exec()
     def appendLog(self, text):
         self.terminalTextEdit.append(text)
         self.logLabel.setText(text)
@@ -707,9 +725,12 @@ class MainWindow(QMainWindow, ShotManager):
         extendAction = menu.addAction(
             self.localization.translate("context_extend_clips", default="Extend Clip(s)")
         )
+
+        mergeAction = QAction(self.localization.translate("context_merge_clips", default="Merge Clips"))
+
         if len(selected_items) > 1:
-            mergeAction = menu.addAction(
-                self.localization.translate("context_merge_clips", default="Merge Clips")
+            menu.addAction(
+                mergeAction
             )
 
         action = menu.exec(self.listWidget.mapToGlobal(pos))
