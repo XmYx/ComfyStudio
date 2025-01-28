@@ -1,14 +1,9 @@
 #!/usr/bin/env python
-import os
 from typing import List
 
 from qtpy.QtCore import (
     Qt,
-    QMimeData,
-    QPoint,
     QSize,
-    QEvent,
-    QUrl,
     QTimer,
     QRect
 )
@@ -26,14 +21,14 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QSlider,
     QListWidgetItem,
-    QMessageBox,
     QLabel,
     QSizePolicy,
-    QPushButton,   # <-- Added for view-mode toggle
+    QPushButton,  # <-- Added for view-mode toggle
     QListView
 )
 
 from comfystudio.sdmodules.dataclasses import Shot
+
 
 class ReorderableListWidget(QWidget):
     """
@@ -344,6 +339,22 @@ class HoverScrubList(QListWidget):
                     x = itemRect.x() + (itemRect.width() - scaled_pixmap.width()) // 2
                     y = itemRect.y() + (itemRect.height() - scaled_pixmap.height()) // 2
                     painter.drawPixmap(x, y, scaled_pixmap)
+                    shot_idx: Shot = item.data(Qt.ItemDataRole.UserRole)
+                    if shot_idx:
+                        shot = self.reorderable_parent.parent().parent().shots[shot_idx]
+                        nameRect = QRect(
+                            itemRect.x() + 2,
+                            itemRect.bottom() - 20,  # last ~20 px for text
+                            itemRect.width() - 4,
+                            18
+                        )
+                        painter.setPen(Qt.black)
+                        painter.drawText(
+                            nameRect,
+                            Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextSingleLine,
+                            shot.name
+                        )
+
                 else:
                     # ListMode: Allocate left part for image and right for details
                     image_width = int(itemRect.height() * 16 / 9)  # Assuming 16:9 aspect ratio
@@ -360,8 +371,9 @@ class HoverScrubList(QListWidget):
                     painter.drawPixmap(img_x, img_y, scaled_pixmap)
 
                     # Draw shot details on the right
-                    shot: Shot = item.data(Qt.ItemDataRole.UserRole)
-                    if shot:
+                    shot_idx: Shot = item.data(Qt.ItemDataRole.UserRole)
+                    if shot_idx:
+                        shot = self.reorderable_parent.parent().parent().shots[shot_idx]
                         details_x = image_rect.right() + 10
                         details_y = itemRect.y() + 10
                         details_width = itemRect.width() - image_rect.width() - 20
