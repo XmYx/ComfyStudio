@@ -5,7 +5,7 @@ import time
 
 import requests
 
-from PyQt6.QtCore import QRunnable
+from qtpy.QtCore import QRunnable
 
 from qtpy.QtCore import (
     QObject,

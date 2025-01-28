@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import sys
 
-from PyQt6.QtWidgets import (
+from qtpy.QtWidgets import (
     QApplication
 )
 

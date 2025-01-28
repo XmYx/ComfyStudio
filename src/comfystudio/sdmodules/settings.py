@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from PyQt6.QtWidgets import QComboBox
+from qtpy.QtWidgets import QComboBox
 from qtpy.QtCore import (
     QStandardPaths
 )

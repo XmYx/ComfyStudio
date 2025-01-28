@@ -12,9 +12,9 @@ import urllib
 from typing import List, Dict
 
 import requests
-from PyQt6 import QtCore
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import (
+from qtpy import QtCore
+from qtpy.QtGui import QCursor
+from qtpy.QtWidgets import (
     QTextEdit,
     QMainWindow,
     QWidget,
@@ -52,8 +52,6 @@ from qtpy.QtCore import (
 from qtpy.QtGui import (
     QAction
 )
-from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
-from qtpy.QtMultimediaWidgets import QVideoWidget
 
 from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
 from comfystudio.sdmodules.localization import LocalizationManager
@@ -119,7 +117,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.showHiddenParams = False  # Toggles display of hidden parameters
 
         self.initUI()
-        self.setupLogging()
+        # self.setupLogging()
         self.loadWorkflows()
         self.updateList()
 
@@ -601,7 +599,10 @@ class MainWindow(QMainWindow, ShotManager):
         self.fillDock()
 
     def updateList(self):
+        previous_selection = self.listWidget.currentRow()
+
         self.listWidget.clear()
+
         for i, shot in enumerate(self.shots):
             icon = self.getShotIcon(shot)
             label_text = f"{shot.name}"
@@ -610,6 +611,8 @@ class MainWindow(QMainWindow, ShotManager):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             self.listWidget.addItem(item)
 
+        if previous_selection is not None and 0 <= previous_selection < self.listWidget.count():
+            self.listWidget.setCurrentRow(previous_selection)
     def onItemClicked(self, item):
         idx = item.data(Qt.ItemDataRole.UserRole)
         if idx == -1:
@@ -858,6 +861,7 @@ class MainWindow(QMainWindow, ShotManager):
                 self.showWorkflowVisualizer(workflow)
 
     def refreshWorkflowsList(self, shot):
+        current_wf_selection = self.workflowListWidget.currentRow()
         self.workflowListWidget.clear()
         if shot:
             for workflow in shot.workflows:
@@ -884,7 +888,8 @@ class MainWindow(QMainWindow, ShotManager):
                 item.setSizeHint(rowWidget.sizeHint())
                 self.workflowListWidget.addItem(item)
                 self.workflowListWidget.setItemWidget(item, rowWidget)
-
+            if current_wf_selection is not None and 0 <= current_wf_selection < self.workflowListWidget.count():
+                self.workflowListWidget.setCurrentRow(current_wf_selection)
     def toggleWorkflowEnabled(self, workflow, state):
         workflow.enabled = (state == Qt.Checked)
 

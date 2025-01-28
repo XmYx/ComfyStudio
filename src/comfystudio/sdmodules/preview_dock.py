@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import os
 
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import (
+from qtpy.QtGui import QPixmap
+from qtpy.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
