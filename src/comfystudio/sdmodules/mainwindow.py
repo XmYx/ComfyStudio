@@ -2030,6 +2030,7 @@ class MainWindow(QMainWindow, ShotManager):
         signature_str = json.dumps(data_struct, sort_keys=True)
         return hashlib.md5(signature_str.encode("utf-8")).hexdigest()
 
+
     def executeWorkflow(self, shotIndex, workflowIndex):
         """
         Executes a workflow for a given shot, sending its JSON to ComfyUI via a RenderWorker.
@@ -2040,8 +2041,37 @@ class MainWindow(QMainWindow, ShotManager):
         shot = self.shots[shotIndex]
         workflow = shot.workflows[workflowIndex]
         isVideo = workflow.isVideo
-
         currentSignature = self.computeWorkflowSignature(shot, workflowIndex)
+        alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
+        if not alreadyRendered:
+            for other_shot_index, other_shot in enumerate(self.shots):
+                if other_shot_index == shotIndex:
+                    continue  # Skip current shot
+                for other_wf_index, other_workflow in enumerate(other_shot.workflows):
+                    if other_workflow.path != workflow.path:
+                        continue  # Different workflow path
+                    other_signature = self.computeWorkflowSignature(other_shot, other_wf_index)
+                    if other_signature == currentSignature:
+                        # Check if the other shot has a valid output
+                        if isVideo and other_shot.videoPath and os.path.exists(other_shot.videoPath):
+                            print(f"[DEBUG] Reusing video from shot '{other_shot.name}' for current shot '{shot.name}'.")
+                            shot.videoPath = other_shot.videoPath
+                            shot.videoVersions.append(other_shot.videoPath)
+                            shot.currentVideoVersion = len(shot.videoVersions) - 1
+                            shot.lastVideoSignature = other_shot.lastVideoSignature
+                            workflow.lastSignature = currentSignature
+                            self.updateList()
+                            self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.videoPath, True)
+                        elif not isVideo and other_shot.stillPath and os.path.exists(other_shot.stillPath):
+                            print(f"[DEBUG] Reusing image from shot '{other_shot.name}' for current shot '{shot.name}'.")
+                            shot.stillPath = other_shot.stillPath
+                            shot.imageVersions.append(other_shot.stillPath)
+                            shot.currentImageVersion = len(shot.imageVersions) - 1
+                            shot.lastStillSignature = other_shot.lastStillSignature
+                            workflow.lastSignature = currentSignature
+                            self.updateList()
+                            self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.stillPath, False)
+
         alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
         if workflow.lastSignature == currentSignature and alreadyRendered and os.path.exists(alreadyRendered):
             print(f"[DEBUG] Skipping workflow {workflowIndex} for shot '{shot.name}' because "
