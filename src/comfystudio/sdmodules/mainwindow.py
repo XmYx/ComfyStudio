@@ -12,7 +12,7 @@ import urllib
 from typing import List, Dict
 
 import requests
-from PyQt6.QtCore import QThreadPool
+from PyQt6.QtCore import QThreadPool, QUrl
 
 from qtpy import QtCore
 
@@ -205,6 +205,9 @@ class MainWindow(QMainWindow, ShotManager):
         self.shotSelected.connect(self.previewDock.onShotSelected)
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
+
+        self.createWindowsMenu()
+
 
     def initWorkflowsTab(self):
         layout = self.workflowsLayout
@@ -496,6 +499,144 @@ class MainWindow(QMainWindow, ShotManager):
         self.menuBar().addMenu(self.fileMenu)
         self.menuBar().addMenu(self.settingsMenu)
         self.menuBar().addMenu(self.helpMenu)  # Add Help Menu
+
+    def createWindowsMenu(self):
+        """
+        Creates the 'Windows' menu in the menu bar with actions to toggle the visibility
+        of various dock widgets, including the Web Browser. Also initializes the WebBrowser
+        dock widget and tabs it with the 'Shot Details' dock widget.
+        """
+        # Create the Windows menu
+        self.windowsMenu = QMenu(self.localization.translate("menu_windows", default="Windows"), self)
+
+        # Action to toggle Shot Details dock
+        self.toggleShotDetailsAct = QAction(
+            self.localization.translate("menu_toggle_shot_details", default="Toggle Shot Details"),
+            self,
+            checkable=True
+        )
+        self.toggleShotDetailsAct.setChecked(True)
+        self.toggleShotDetailsAct.triggered.connect(self.dock.setVisible)
+        self.windowsMenu.addAction(self.toggleShotDetailsAct)
+
+        # Action to toggle Terminal Output dock
+        self.toggleTerminalAct = QAction(
+            self.localization.translate("menu_toggle_terminal", default="Toggle Terminal Output"),
+            self,
+            checkable=True
+        )
+        self.toggleTerminalAct.setChecked(True)
+        self.toggleTerminalAct.triggered.connect(self.terminalDock.setVisible)
+        self.windowsMenu.addAction(self.toggleTerminalAct)
+
+        # Action to toggle Preview Dock
+        self.togglePreviewDockAct = QAction(
+            self.localization.translate("menu_toggle_preview_dock", default="Toggle Preview Dock"),
+            self,
+            checkable=True
+        )
+        self.togglePreviewDockAct.setChecked(True)
+        self.togglePreviewDockAct.triggered.connect(self.previewDock.setVisible)
+        self.windowsMenu.addAction(self.togglePreviewDockAct)
+
+        # Action to toggle Web Browser dock
+        self.toggleWebBrowserAct = QAction(
+            self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser"),
+            self,
+            checkable=True
+        )
+        self.toggleWebBrowserAct.setChecked(False)
+        self.toggleWebBrowserAct.triggered.connect(self.toggleWebBrowser)
+        self.windowsMenu.addAction(self.toggleWebBrowserAct)
+
+        # Add the Windows menu to the menu bar
+        self.menuBar().addMenu(self.windowsMenu)
+
+        # Create the WebBrowser dock widget if it doesn't exist
+        if not hasattr(self, 'webBrowserDock'):
+            # Initialize the WebBrowser dock
+            self.webBrowserDock = QDockWidget(
+                self.localization.translate("dock_web_browser", default="Web Browser"),
+                self
+            )
+            self.webBrowserDock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+
+            # Initialize the WebBrowser view
+            from qtpy.QtWebEngineWidgets import QWebEngineView
+
+            self.webBrowserView = QWebEngineView()
+            self.webBrowserDock.setWidget(self.webBrowserView)
+
+            # Add the WebBrowser dock to the same area as Shot Details and tabify
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.webBrowserDock)
+            self.tabifyDockWidget(self.dock, self.webBrowserDock)
+
+            # Initially hide the WebBrowser dock
+            self.webBrowserDock.hide()
+        self.updateWindowsMenuTexts()
+
+    def updateWindowsMenuTexts(self):
+        """
+        Updates the texts of the 'Windows' menu and its actions based on the current localization.
+        This should be called within the retranslateUi method to refresh UI elements when the language changes.
+        """
+        # Update Windows menu title
+        self.windowsMenu.setTitle(self.localization.translate("menu_windows", default="Windows"))
+
+        # Update actions' texts and tooltips
+        self.toggleShotDetailsAct.setText(
+            self.localization.translate("menu_toggle_shot_details", default="Toggle Shot Details")
+        )
+        self.toggleShotDetailsAct.setToolTip(
+            self.localization.translate("tooltip_toggle_shot_details", default="Show or hide the Shot Details dock")
+        )
+
+        self.toggleTerminalAct.setText(
+            self.localization.translate("menu_toggle_terminal", default="Toggle Terminal Output")
+        )
+        self.toggleTerminalAct.setToolTip(
+            self.localization.translate("tooltip_toggle_terminal", default="Show or hide the Terminal Output dock")
+        )
+
+        self.togglePreviewDockAct.setText(
+            self.localization.translate("menu_toggle_preview_dock", default="Toggle Preview Dock")
+        )
+        self.togglePreviewDockAct.setToolTip(
+            self.localization.translate("tooltip_toggle_preview_dock", default="Show or hide the Preview Dock")
+        )
+
+        self.toggleWebBrowserAct.setText(
+            self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser")
+        )
+        self.toggleWebBrowserAct.setToolTip(
+            self.localization.translate("tooltip_toggle_webbrowser", default="Show or hide the Web Browser dock")
+        )
+
+        # Update WebBrowser dock title
+        self.webBrowserDock.setWindowTitle(
+            self.localization.translate("dock_web_browser", default="Web Browser")
+        )
+
+    def toggleWebBrowser(self, checked):
+        """
+        Slot to handle the toggling of the WebBrowser dock widget. When shown,
+        it loads the configured 'comfy_ip' URL. When hidden, it simply hides the dock.
+
+        Args:
+            checked (bool): The checked state of the toggle action.
+        """
+        if checked:
+            # Show the WebBrowser dock
+            self.webBrowserDock.show()
+
+            # Retrieve the 'comfy_ip' URL from settings
+            comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
+
+            # Load the URL in the WebBrowser view
+            self.webBrowserView.setUrl(QUrl(comfy_ip))
+        else:
+            # Hide the WebBrowser dock
+            self.webBrowserDock.hide()
 
 
     def createToolBar(self):
@@ -2085,6 +2226,7 @@ class MainWindow(QMainWindow, ShotManager):
         # Update Menu Bar
         self.updateMenuBarTexts()
 
+        self.updateWindowsMenuTexts()
         # Update Tool Bar
         self.updateToolBarTexts()
 

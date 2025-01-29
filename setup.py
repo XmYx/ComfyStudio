@@ -10,6 +10,8 @@ setup(
     install_requires=[
         'PyQt6<=6.6.0',
         'PyQt6-Qt6<=6.6.0',
+        'PyQt6-WebEngine<=6.6.0',
+        'PyQt6_WebEngine_Qt6<=6.6.0',
         'PyQt6_sip<=13.6.0',
         'requests',
         'qtpy',
