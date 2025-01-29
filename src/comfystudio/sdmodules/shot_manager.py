@@ -263,22 +263,37 @@ class ShotManager:
             self.updateList()
             self.clearDock()
 
+
     def saveProject(self):
-        if not self.currentFilePath:
+        self.setProjectModified(False)
+        if not hasattr(self, 'currentFilePath') or not self.currentFilePath:
             self.saveProjectAs()
-        else:
-            self.writeProject(self.currentFilePath)
+            return
+        self._saveProjectToPath(self.currentFilePath)
 
     def saveProjectAs(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save Project As", "", "JSON Files (*.json)")
-        if path:
-            self.currentFilePath = path
-            self.writeProject(path)
+        filePath, _ = QFileDialog.getSaveFileName(
+            self,
+            self.localization.translate("dialog_save_as_title", default="Save Project As"),
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if filePath:
+            self.currentFilePath = filePath
+            self._saveProjectToPath(filePath)
+            self.addToRecents(filePath)
 
-    def writeProject(self, path):
-        data = {"shots": self.shots}
+    def _saveProjectToPath(self, filePath):
+        project_data = {
+            "shots": [shot.to_dict() for shot in self.shots],
+        }
         try:
-            with open(path, "w") as f:
-                json.dump(data, f, indent=4)
+            with open(filePath, 'w') as f:
+                json.dump(project_data, f, indent=4)
+            self.statusMessage.setText(
+                f"{self.localization.translate('status_saved_to', default='Project saved to')} {filePath}")
+            self.addToRecents(filePath)
         except Exception as e:
-            QMessageBox.warning(self, "Save Error", str(e))
+            QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
+                                self.localization.translate("error_failed_to_save_project",
+                                                            default=f"Failed to save project: {e}"))

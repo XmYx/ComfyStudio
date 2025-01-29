@@ -32,6 +32,8 @@ class SettingsManager:
             "comfy_ip": "http://localhost:8188",
             "workflow_params": {}
         }
+        if "recent_files" not in self.data:
+            self.data["recent_files"] = []
         self.load()
 
     def load(self):

@@ -484,6 +484,11 @@ class MainWindow(QMainWindow, ShotManager):
         self.fileMenu.addAction(self.renderAllAct)
         self.fileMenu.addAction(self.saveDefaultsAct)
 
+        # Add Recents Submenu
+        self.recentsMenu = QMenu(self.localization.translate("menu_recents", default="Recents"), self)
+        self.fileMenu.addMenu(self.recentsMenu)
+        self.updateRecentsMenu()
+
         # Add actions to Settings Menu
         self.settingsMenu.addAction(self.openSettingsAct)
         self.settingsMenu.addAction(self.openModelManagerAct)
@@ -499,6 +504,64 @@ class MainWindow(QMainWindow, ShotManager):
         self.menuBar().addMenu(self.fileMenu)
         self.menuBar().addMenu(self.settingsMenu)
         self.menuBar().addMenu(self.helpMenu)  # Add Help Menu
+
+    def updateRecentsMenu(self):
+        self.recentsMenu.clear()
+        recents = self.settingsManager.get("recent_files", [])
+        if not recents:
+            emptyItem = QAction(self.localization.translate("menu_recents_empty", default="No recent projects"), self)
+            emptyItem.setEnabled(False)
+            self.recentsMenu.addAction(emptyItem)
+        else:
+            for filePath in recents:
+                action = QAction(os.path.basename(filePath), self)
+                action.setToolTip(filePath)
+                action.triggered.connect(lambda checked, path=filePath: self.openProjectFromPath(path))
+                self.recentsMenu.addAction(action)
+            # Add separator and 'Clear Recents' option
+            self.recentsMenu.addSeparator()
+            clearAction = QAction(self.localization.translate("menu_recents_clear", default="Clear Recents"), self)
+            clearAction.triggered.connect(self.clearRecents)
+            self.recentsMenu.addAction(clearAction)
+
+    def addToRecents(self, filePath):
+        recents = self.settingsManager.get("recent_files", [])
+        if filePath in recents:
+            recents.remove(filePath)
+        recents.insert(0, filePath)
+        recents = recents[:10]  # Keep only the latest 10
+        self.settingsManager.set("recent_files", recents)
+        self.settingsManager.save()
+        self.updateRecentsMenu()
+
+    def clearRecents(self):
+        self.settingsManager.set("recent_files", [])
+        self.settingsManager.save()
+        self.updateRecentsMenu()
+
+    def openProjectFromPath(self, filePath):
+        if os.path.exists(filePath):
+            try:
+                with open(filePath, "r") as f:
+                    project_data = json.load(f)
+                shots_data = project_data.get("shots", [])
+                self.shots = [Shot.from_dict(shot_dict) for shot_dict in shots_data]
+                self.updateList()
+                self.currentFilePath = filePath
+                self.statusMessage.setText(
+                    f"{self.localization.translate('status_loaded_from', default='Project loaded from')} {filePath}")
+                self.fillDock()
+                self.addToRecents(filePath)
+                self.setProjectModified(False)
+            except Exception as e:
+                QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
+                                    self.localization.translate("error_failed_to_load_project",
+                                                                default=f"Failed to load project: {e}"))
+        else:
+            QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
+                                self.localization.translate("error_project_not_found",
+                                                            default=f"Project file not found: {filePath}"))
+            self.clearRecents()
 
     def createWindowsMenu(self):
         """
@@ -832,6 +895,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.currentShotIndex = len(self.shots) - 1
         self.listWidget.setCurrentRow(self.listWidget.count() - 1)
         self.fillDock()
+        self.setProjectModified(True)
 
     def updateList(self):
         previous_selection = self.listWidget.currentRow()
@@ -1027,37 +1091,87 @@ class MainWindow(QMainWindow, ShotManager):
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
 
     def onSelectionChanged(self):
+        """
+        Handles the event when the selection in the shots list widget changes.
+        Ensures that the preview widget displays the last rendered still or video
+        if no specific workflow was previously selected.
+        """
         self.clearDock()
         try:
             self.player.stop()
-        except:
-            pass
+        except AttributeError:
+            pass  # Assuming 'player' might not be initialized yet
+
         selected_items = self.listWidget.selectedItems()
+
         if len(selected_items) == 1:
-            idx = selected_items[0].data(Qt.ItemDataRole.UserRole)
+            item = selected_items[0]
+            idx = item.data(Qt.ItemDataRole.UserRole)
+
             if idx != -1:
                 self.currentShotIndex = idx
                 self.fillDock()
 
+                shot = self.shots[idx]
+
+                # Check if there's a previously selected workflow for this shot
                 if idx in self.lastSelectedWorkflowIndex:
                     last_wf_idx = self.lastSelectedWorkflowIndex[idx]
-                    shot = self.shots[idx]
-                    # Ensure last_wf_idx is still valid for the shot
                     if 0 <= last_wf_idx < len(shot.workflows):
-                        # Reselect that workflow in the workflowListWidget
+                        # Reselect the previously selected workflow
                         self.workflowListWidget.setCurrentRow(last_wf_idx)
-                        # Make sure the parameter UI is updated
-                        item = self.workflowListWidget.item(last_wf_idx)
-                        if item:
-                            self.onWorkflowItemClicked(item)
-                self.shotSelected.emit(idx)
+                        workflow_item = self.workflowListWidget.item(last_wf_idx)
+                        if workflow_item:
+                            self.onWorkflowItemClicked(workflow_item)
+
+                        # Emit signals to update the preview widget
+                        self.shotSelected.emit(idx)
+                        self.workflowSelected.emit(idx, last_wf_idx)
+                    else:
+                        # Invalid workflow index, remove from lastSelectedWorkflowIndex
+                        del self.lastSelectedWorkflowIndex[idx]
+
+                else:
+                    # No previously selected workflow; check for last rendered output
+                    last_rendered_workflow_idx = None
+
+                    # Prioritize still over video
+                    if shot.lastStillSignature:
+                        # Find the workflow that generated the last still image
+                        for i, wf in enumerate(shot.workflows):
+                            if wf.lastSignature == shot.lastStillSignature:
+                                last_rendered_workflow_idx = i
+                                break
+
+                    if last_rendered_workflow_idx is None and shot.lastVideoSignature:
+                        # Find the workflow that generated the last video
+                        for i, wf in enumerate(shot.workflows):
+                            if wf.lastSignature == shot.lastVideoSignature:
+                                last_rendered_workflow_idx = i
+                                break
+
+                    if last_rendered_workflow_idx is not None:
+                        # Select the workflow that generated the last output
+                        self.workflowListWidget.setCurrentRow(last_rendered_workflow_idx)
+                        workflow_item = self.workflowListWidget.item(last_rendered_workflow_idx)
+                        if workflow_item:
+                            self.onWorkflowItemClicked(workflow_item)
+
+                        # Emit signals to update the preview widget
+                        self.shotSelected.emit(idx)
+                        self.workflowSelected.emit(idx, last_rendered_workflow_idx)
+                    else:
+                        # No workflow selected and no last rendered output
+                        # Emit shotSelected to ensure the preview is updated appropriately
+                        self.shotSelected.emit(idx)
             else:
+                # Invalid shot index; reset selection
                 self.currentShotIndex = -1
                 self.clearDock()
         else:
+            # Multiple shots selected or no selection; reset selection
             self.currentShotIndex = -1
             self.clearDock()
-
     def onRenderSelected(self):
         """
         Render only the currently selected shots based on the user's choice of render mode.
@@ -2139,7 +2253,7 @@ class MainWindow(QMainWindow, ShotManager):
                     shot.lastStillSignature = self.computeRenderSignature(shot, isVideo=False)
 
                 # Mark this workflow's own signature, so we don't re-render if nothing changed
-                workflow.lastSignature = self.computeWorkflowSignature(shot, workflowIndex)
+                workflow.lastSignature = self.computeRenderSignature(shot, isVideo=workflow.isVideo)
 
                 # Update the UI / shot listing
                 self.updateList()
@@ -2160,9 +2274,6 @@ class MainWindow(QMainWindow, ShotManager):
         else:
             logging.error(f"Unknown render mode: {self.render_mode}")
             self.startNextRender()
-
-    # def onComfyError(self, error_msg):
-    #     QMessageBox.warning(self, "Comfy Error", f"Error polling ComfyUI: {error_msg}")
 
 
     def onComfyError(self, error_msg):
@@ -2319,7 +2430,12 @@ class MainWindow(QMainWindow, ShotManager):
             "shotParams": sorted(relevantShotParams, key=lambda x: x.get("name", x.get("workflow_path", "")))
         }
         signature_str = json.dumps(data_struct, sort_keys=True)
-        return hashlib.md5(signature_str.encode("utf-8")).hexdigest()
+        signature = hashlib.md5(signature_str.encode("utf-8")).hexdigest()
+
+        # Debugging: Log the signature generation
+        logging.debug(f"Computed {'Video' if isVideo else 'Still'} Signature: {signature} for shot '{shot.name}'")
+
+        return signature
 
     def newProject(self):
         self.shots.clear()
@@ -2329,7 +2445,12 @@ class MainWindow(QMainWindow, ShotManager):
         self.statusMessage.setText("New project created.")
 
     def openProject(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "JSON Files (*.json);;All Files (*)")
+        filePath, _ = QFileDialog.getOpenFileName(
+            self,
+            self.localization.translate("dialog_open_project_title", default="Open Project"),
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
         if filePath:
             try:
                 with open(filePath, "r") as f:
@@ -2338,30 +2459,16 @@ class MainWindow(QMainWindow, ShotManager):
                 self.shots = [Shot.from_dict(shot_dict) for shot_dict in shots_data]
                 self.updateList()
                 self.currentFilePath = filePath
-                self.statusMessage.setText(f"Project loaded from {filePath}")
+                self.statusMessage.setText(
+                    f"{self.localization.translate('status_loaded_from', default='Project loaded from')} {filePath}")
                 self.fillDock()
+                self.addToRecents(filePath)
+                self.setProjectModified(False)
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to load project: {e}")
+                QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
+                                    self.localization.translate("error_failed_to_load_project",
+                                                                default=f"Failed to load project: {e}"))
 
-    def saveProject(self):
-        if not hasattr(self, 'currentFilePath') or not self.currentFilePath:
-            self.saveProjectAs()
-            return
-        project_data = {
-            "shots": [shot.to_dict() for shot in self.shots],
-        }
-        try:
-            with open(self.currentFilePath, 'w') as f:
-                json.dump(project_data, f, indent=4)
-            self.statusMessage.setText(f"Project saved to {self.currentFilePath}")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to save project: {e}")
-
-    def saveProjectAs(self):
-        filePath, _ = QFileDialog.getSaveFileName(self, "Save Project As", "", "JSON Files (*.json);;All Files (*)")
-        if filePath:
-            self.currentFilePath = filePath
-            self.saveProject()
 
     def importShotsFromTxt(self):
         filePath, _ = QFileDialog.getOpenFileName(self, "Import Shots from TXT", "", "Text Files (*.txt);;All Files (*)")
@@ -2671,22 +2778,39 @@ class MainWindow(QMainWindow, ShotManager):
         self.settingsManager.save()
         self.stopComfy()
 
-    def closeEvent(self, event):
-        self.saveWindowState()
+    def isProjectModified(self):
+        # Implement logic to check if the project has been modified.
+        # This could involve setting a flag whenever shots or workflows are changed.
+        return getattr(self, '_project_modified', False)
 
-        if len(self.shots) > 0:
+    def setProjectModified(self, modified=True):
+        self._project_modified = modified
+
+    def isProjectSaved(self):
+        # Check if currentFilePath is set and the project is not modified
+        return hasattr(self, 'currentFilePath') and self.currentFilePath and not self.isProjectModified()
+
+    def closeEvent(self, event):
+        if self.isProjectModified():
             reply = QMessageBox.question(
                 self,
-                "Save Project?",
-                "Do you want to save the project before exiting?",
+                self.localization.translate("dialog_save_project_title", default="Save Project?"),
+                self.localization.translate("dialog_save_project_question",
+                                            default="Do you want to save the project before exiting?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
             )
-            if reply in [QMessageBox.StandardButton.Yes]:
+            if reply == QMessageBox.StandardButton.Yes:
                 self.saveProject()
+                # if self.isProjectSaved():
                 self.cleanUp()
                 event.accept()
+                # else:
+                #     event.ignore()
             elif reply == QMessageBox.StandardButton.No:
                 self.cleanUp()
                 event.accept()
             else:
                 event.ignore()
+        else:
+            self.cleanUp()
+            event.accept()
