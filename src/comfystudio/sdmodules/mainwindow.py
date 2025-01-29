@@ -904,41 +904,6 @@ class MainWindow(QMainWindow, ShotManager):
             self.currentShotIndex = -1
             self.clearDock()
 
-    # def onRenderSelected(self):
-    #     """
-    #     Render only the currently selected shots.
-    #     """
-    #     selected_items = self.listWidget.selectedItems()
-    #     if not selected_items:
-    #         QMessageBox.warning(self, "Warning", "No shot selected to render.")
-    #         return
-    #
-    #     # First stop any current rendering processes
-    #     # but do NOT clear the queue again after we add new items
-    #     self.stopRendering()
-    #
-    #     # Now set up a new queue from selected shots
-    #     for it in selected_items:
-    #         idx = it.data(Qt.ItemDataRole.UserRole)
-    #         if idx is not None and isinstance(idx, int) and 0 <= idx < len(self.shots):
-    #             self.renderQueue.append(idx)
-    #
-    #     # Start rendering the new queue
-    #     self.startNextRender()
-    #
-    # def onRenderAll(self):
-    #     """
-    #     Render all shots by adding any shots not currently in the queue.
-    #     If not already rendering, start the rendering process.
-    #     """
-    #     # Add all shots not already in the queue and not currently being rendered
-    #     for i in range(len(self.shots)):
-    #         if i not in self.renderQueue and i != self.shotInProgress:
-    #             self.renderQueue.append(i)
-    #
-    #     # Start rendering if not already in progress
-    #     if self.shotInProgress == -1 and self.renderQueue:
-    #         self.startNextRender()
     def onRenderSelected(self):
         """
         Render only the currently selected shots based on the user's choice of render mode.
@@ -1234,7 +1199,7 @@ class MainWindow(QMainWindow, ShotManager):
         Allows setting this param to use the previous workflow's image or video result.
         """
         menu = QMenu(self)
-
+        currentItem = self.workflowListWidget.currentItem()
         paramType = param.get("type", "string")
         if paramType == "string":
             setPrevImage = menu.addAction("Set Param to Previous Workflow's Image")
@@ -1274,39 +1239,48 @@ class MainWindow(QMainWindow, ShotManager):
                 param.pop("dynamicOverrides", None)
                 QMessageBox.information(self, "Info", "Dynamic override cleared.")
             elif chosen == setAllSelectedShotsAction:
-                self.setParamValueInShots(param, onlySelected=True)
+                self.setParamValueInShots(param, onlySelected=True, item=currentItem)
             elif chosen == setAllShotsAction:
-                self.setParamValueInShots(param, onlySelected=False)
+                self.setParamValueInShots(param, onlySelected=False, item=currentItem)
         else:
-            # Non-string param, do nothing or show minimal menu
-            pass
+            setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
+            setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
+            chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
+            if chosen == setAllSelectedShotsAction:
+                self.setParamValueInShots(param, onlySelected=True, item=currentItem)
+            elif chosen == setAllShotsAction:
+                self.setParamValueInShots(param, onlySelected=False, item=currentItem)
 
         # After making changes, re-fill the workflow item to show updated text
         # if the user re-opens the workflow item
         # For immediate refresh, you can re-call onWorkflowItemClicked on the current item:
-        currentItem = self.workflowListWidget.currentItem()
+
         if currentItem:
             self.onWorkflowItemClicked(currentItem)
 
-    def setParamValueInShots(self, param: dict, onlySelected: bool):
+    def setParamValueInShots(self, param: dict, onlySelected: bool, item):
         """
         Copies this param's current value to the same-named parameter in either:
           - all selected shots, or
           - all shots
-        If 'param' is a shot param, we match shot params.
-        If 'param' is a workflow param, we match workflow params with the same name.
-        """
 
-        # 1) Figure out if it's a shot-level or workflow-level param
+        If 'param' is a shot param, it matches shot params.
+        If 'param' is a workflow param, it matches workflow params with the same name and workflow path.
+
+        Args:
+            param (dict): The parameter dictionary containing at least 'name', 'value', and optionally 'workflow_path'.
+            onlySelected (bool): If True, apply changes only to selected shots; otherwise, apply to all shots.
+        """
+        # 1) Determine if it's a shot-level or workflow-level param
         is_shot_param = True
         if "nodeIDs" in param:
-            # Usually workflow param objects have "nodeIDs"
+            # Workflow params typically have 'nodeIDs'
             is_shot_param = False
 
-        # 2) The value we want to replicate
+        # 2) The value to replicate
         new_value = param.get("value", "")
 
-        # 3) Decide which shots to update
+        # 3) Determine which shots to update
         shot_indices_to_update = []
         if onlySelected:
             selected_items = self.listWidget.selectedItems()
@@ -1318,35 +1292,58 @@ class MainWindow(QMainWindow, ShotManager):
             # All shots in the project
             shot_indices_to_update = list(range(len(self.shots)))
 
-        # 4) Get the param name to match
+        # 4) Get the parameter name to match
         param_name = param.get("name", "")
 
-        # 5) For each shot in that list, find matching param(s) and set the new value
+        # 4b) Get the workflow path if it's a workflow param
+        workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
+        if not workflow:
+            return
+        workflow_path = workflow.path
+
+        # 5) Iterate through each shot and apply the parameter changes
         for sidx in shot_indices_to_update:
             shot = self.shots[sidx]
 
             if is_shot_param:
-                # For shot-level param, look in shot.params
+                # For shot-level param, update matching shot params
                 for sp in shot.params:
                     if sp["name"] == param_name:
                         sp["value"] = new_value
-                # Done. Refresh the shot's param list
+                # Refresh the shot's parameter list in the UI
                 self.refreshParamsList(shot)
 
             else:
-                # For workflow-level param, we must loop each workflow in the shot
-                for wf in shot.workflows:
+                # For workflow-level param, update only in the specified workflow
+                if not workflow_path:
+                    logging.warning(
+                        f"Workflow path not provided for parameter '{param_name}'. Skipping shot index {sidx}.")
+                    continue  # Cannot determine which workflow to update without the path
+
+                # Find the workflow with the matching path
+                matching_workflows = [wf for wf in shot.workflows if wf.path == workflow_path]
+                if not matching_workflows:
+                    logging.warning(f"No matching workflow found for path '{workflow_path}' in shot index {sidx}.")
+                    continue  # No matching workflow found
+
+                for wf in matching_workflows:
                     if "params" not in wf.parameters:
                         continue
                     for p in wf.parameters["params"]:
                         if p["name"] == param_name:
                             p["value"] = new_value
-                    # Save changes for that workflow (and refresh UI if needed)
+                    # Save changes and refresh the workflow's parameter list in the UI
                     self.saveCurrentWorkflowParamsForShot(wf)
 
-        # 6) Optional: Show a quick message or just re-fill UI
-        QMessageBox.information(self, "Info",
-                                f"Set '{param_name}' to '{new_value}' in {len(shot_indices_to_update)} shot(s).")
+        # 6) Inform the user of the changes
+        target_shots = len(shot_indices_to_update)
+        scope = "selected" if onlySelected else "all"
+        QMessageBox.information(
+            self,
+            "Info",
+            f"Set parameter '{param_name}' to '{new_value}' in {target_shots} {scope} shot(s)."
+        )
+
     def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: Dict, newVal):
         param["value"] = newVal
         self.saveCurrentWorkflowParams()
@@ -1695,18 +1692,6 @@ class MainWindow(QMainWindow, ShotManager):
         if self.currentShotIndex != -1:
             self.refreshParamsList(self.shots[self.currentShotIndex])
 
-    # def startNextRender(self):
-    #
-    #     print("Start Next Render")
-    #     if not self.renderQueue:
-    #         print("no item in queue, returning")
-    #
-    #         return
-    #     self.shotInProgress = self.renderQueue.pop(0)
-    #     self.workflowIndexInProgress = 0
-    #     self.initWorkflowQueueForShot(self.shotInProgress)
-    #     self.processNextWorkflow()
-
     def startNextRender(self):
         """
         Starts the next render task based on the current render mode.
@@ -1919,123 +1904,6 @@ class MainWindow(QMainWindow, ShotManager):
         self.statusMessage.setText(f"Rendering {shot.name} - Workflow {workflowIndex + 1}/{len(shot.workflows)} ...")
         self.activeWorker = worker  # Keep a reference to prevent garbage collection
         QThreadPool.globalInstance().start(worker)
-    # def executeWorkflow(self, shotIndex, workflowIndex):
-    #     """
-    #     Executes a workflow for a given shot, sending its JSON to ComfyUI via a RenderWorker.
-    #     Only updates the relevant inputs in the existing JSON keys (no renumbering).
-    #     Adds debug prints to show exactly what parameters get overridden.
-    #     Overrides a node's input ONLY if node_id is listed in that param's "nodeIDs".
-    #     """
-    #     shot = self.shots[shotIndex]
-    #     workflow = shot.workflows[workflowIndex]
-    #     isVideo = workflow.isVideo
-    #
-    #     currentSignature = self.computeWorkflowSignature(shot, workflowIndex)
-    #     alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
-    #     if workflow.lastSignature == currentSignature and alreadyRendered and os.path.exists(alreadyRendered):
-    #         print(f"[DEBUG] Skipping workflow {workflowIndex} for shot '{shot.name}' because "
-    #               f"params haven't changed and a valid file exists.")
-    #         self.workflowIndexInProgress += 1
-    #         self.processNextWorkflow()
-    #         return
-    #
-    #     try:
-    #         with open(workflow.path, "r") as f:
-    #             workflow_json = json.load(f)
-    #     except Exception as e:
-    #         QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
-    #         self.workflowIndexInProgress += 1
-    #         self.processNextWorkflow()
-    #         return
-    #
-    #     # Prepare any param overrides for workflow_json if needed
-    #     local_params = copy.deepcopy(shot.params)
-    #     wf_params = workflow.parameters.get("params", [])
-    #
-    #     print("[DEBUG] Original workflow JSON keys:")
-    #     for k in workflow_json.keys():
-    #         print("       ", k)
-    #
-    #     # If there's a previous workflow result, apply it to params
-
-    #
-    #     # Now override nodes in workflow_json with local_params + wf_params
-    #     # BUT only if node_id is found in param["nodeIDs"] for that param.
-    #     for node_id, node_data in workflow_json.items():
-    #         inputs_dict = node_data.get("inputs", {})
-    #         meta_title = node_data.get("_meta", {}).get("title", "").lower()
-    #
-    #         # 1) Shot-level param overrides (with nodeIDs check)
-    #         for input_key in list(inputs_dict.keys()):
-    #             ikey_lower = str(input_key).lower()
-    #             for param in local_params:
-    #                 # If param is for this node_id
-    #                 node_ids = param.get("nodeIDs", [])
-    #                 if str(node_id) not in node_ids:
-    #                     continue  # skip if this param is not meant for this node
-    #
-    #                 # If the param name matches this input key
-    #                 if param["name"].lower() == ikey_lower:
-    #                     old_val = inputs_dict[input_key]
-    #                     new_val = param["value"]
-    #                     print(f"[DEBUG] Overriding node '{node_id}' input '{input_key}' "
-    #                           f"from '{old_val}' to '{new_val}' (SHOT-level param)")
-    #                     inputs_dict[input_key] = new_val
-    #
-    #         # 2) Workflow-level param overrides (with nodeIDs check)
-    #         for input_key in list(inputs_dict.keys()):
-    #             ikey_lower = str(input_key).lower()
-    #             for param in wf_params:
-    #                 # if not param.get("visible", True):
-    #                 #     continue
-    #                 node_ids = param.get("nodeIDs", [])
-    #                 if str(node_id) not in node_ids:
-    #                     continue
-    #                 if param["name"].lower() == ikey_lower:
-    #                     old_val = inputs_dict[input_key]
-    #                     new_val = param["value"]
-    #                     print(f"[DEBUG] Overriding node '{node_id}' input '{input_key}' "
-    #                           f"from '{old_val}' to '{new_val}' (WF-level param)")
-    #                     inputs_dict[input_key] = new_val
-    #
-    #         # 3) Special override for "positive prompt" if found in shot params
-    #         #    but also only if node_id is in the param's nodeIDs (if that param uses them).
-    #         if "positive prompt" in [p["name"].lower() for p in local_params] and "positive prompt" in meta_title:
-    #             for param in local_params:
-    #                 if param["name"].lower() == "positive prompt":
-    #                     node_ids = param.get("nodeIDs", [])
-    #                     # If no nodeIDs on the param, or the node_id is listed, we override 'text'
-    #                     if not node_ids or str(node_id) in node_ids:
-    #                         old_val = inputs_dict.get("text", "")
-    #                         new_val = param["value"]
-    #                         print(f"[DEBUG] Overriding node '{node_id}' 'text' from '{old_val}' to '{new_val}' "
-    #                               f"(POSITIVE PROMPT param)")
-    #                         inputs_dict["text"] = new_val
-    #
-    #     # Create and start the RenderWorker to handle submission + result polling
-    #     comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188")
-    #     from qtpy.QtCore import QThreadPool
-    #     worker = RenderWorker(
-    #         workflow_json=workflow_json,
-    #         shotIndex=shotIndex,
-    #         isVideo=isVideo,
-    #         comfy_ip=comfy_ip,
-    #         parent=self
-    #     )
-    #     # Connect signals
-    #     worker.signals.result.connect(lambda data, si, iv: self.onComfyResult(data, si, workflowIndex))
-    #     worker.signals.error.connect(self.onComfyError)
-    #     worker.signals.finished.connect(self.onComfyFinished)
-    #
-    #     # Show final structure in debug before sending
-    #     print("[DEBUG] Final workflow JSON structure before sending:")
-    #     for k, v in workflow_json.items():
-    #         print("       Node ID:", k)
-    #         print("               ", v)
-    #
-    #     # Start
-    #     self.statusMessage.setText(f"Rendering {shot.name} - Workflow {workflowIndex + 1}/{len(shot.workflows)} ...")
-    #     QThreadPool.globalInstance().start(worker)
 
     def onComfyResult(self, result_data, shotIndex, workflowIndex):
         """
