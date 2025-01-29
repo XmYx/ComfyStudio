@@ -66,6 +66,7 @@ from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
 from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.localization import LocalizationManager
+from comfystudio.sdmodules.model_manager import ModelManagerWindow
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
@@ -439,6 +440,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct = QAction(self)
         self.saveDefaultsAct = QAction(self)
         self.openSettingsAct = QAction(self)
+        self.openModelManagerAct = QAction(self)
         self.setupComfyNodesAct = QAction(self)
         self.setupComfyAct = QAction(self)
 
@@ -460,6 +462,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.renderAllAct.triggered.connect(self.onRenderAll)
         self.saveDefaultsAct.triggered.connect(self.onSaveWorkflowDefaults)
         self.openSettingsAct.triggered.connect(self.showSettingsDialog)
+        self.openModelManagerAct.triggered.connect(self.openModelManager)
         self.setupComfyNodesAct.triggered.connect(self.setup_custom_nodes)
         self.setupComfyAct.triggered.connect(self.startComfyInstallerWizard)
 
@@ -480,6 +483,7 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Add actions to Settings Menu
         self.settingsMenu.addAction(self.openSettingsAct)
+        self.settingsMenu.addAction(self.openModelManagerAct)
         self.settingsMenu.addAction(self.setupComfyNodesAct)
         self.settingsMenu.addAction(self.setupComfyAct)
 
@@ -492,6 +496,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.menuBar().addMenu(self.fileMenu)
         self.menuBar().addMenu(self.settingsMenu)
         self.menuBar().addMenu(self.helpMenu)  # Add Help Menu
+
 
     def createToolBar(self):
         # Clear existing toolbar to prevent duplication
@@ -587,6 +592,7 @@ class MainWindow(QMainWindow, ShotManager):
         self.saveDefaultsAct.setText(
             self.localization.translate("menu_save_defaults", default="Save Workflow Defaults"))
         self.openSettingsAct.setText(self.localization.translate("menu_open_settings", default="Open Settings"))
+        self.openModelManagerAct.setText(self.localization.translate("menu_open_model_manager", default="Open Model Manager"))
         self.setupComfyAct.setText(self.localization.translate("menu_setup_comfy_base", default="Install/Update ComfyUI"))
         self.setupComfyNodesAct.setText(self.localization.translate("menu_setup_comfy", default="Install/Update Custom Nodes"))
         # Update Help Menu Actions Texts
@@ -661,6 +667,13 @@ class MainWindow(QMainWindow, ShotManager):
         """
         wizard = ComfyInstallerWizard(parent=self, settings_manager=self.settingsManager, log_callback=self.appendLog)
         wizard.exec()
+
+    def openModelManager(self):
+        """
+        Opens the Model Manager Window.
+        """
+        self.model_manager_window = ModelManagerWindow(parent=self, settings_manager=self.settingsManager)
+        self.model_manager_window.exec()
     def appendLog(self, text):
         self.terminalTextEdit.append(text)
         self.logLabel.setText(text)

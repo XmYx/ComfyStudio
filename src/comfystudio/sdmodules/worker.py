@@ -343,3 +343,81 @@ class ComfyWorker(QObject):
                 self.log_message.emit("ComfyUI process did not terminate gracefully. Killing process...")
                 self.process.kill()
                 self.log_message.emit("ComfyUI process killed.")
+
+
+from huggingface_hub import hf_hub_download
+
+class DownloadWorker(QObject):
+    """
+    Worker class to download files from Hugging Face Hub using huggingface_hub's hf_hub_download.
+    Emits signals to communicate download status.
+    """
+    started = Signal()
+    finished = Signal(str, bool)      # Emits file_path and success status
+    error = Signal(str)               # Emits error messages
+
+    def __init__(self, repo_id, filename, repo_type="model", revision=None, local_dir=None, cache_dir=None, force_download=False):
+        """
+        Initializes the DownloadWorker.
+
+        Args:
+            repo_id (str): Repository ID on Hugging Face Hub (e.g., "comfyanonymous/flux_dev_scaled_fp8_test").
+            filename (str): Name of the file to download (e.g., "flux_dev_fp8_scaled_diffusion_model.safetensors").
+            repo_type (str, optional): Type of repository ("model", "dataset"). Defaults to "model".
+            revision (str, optional): Specific revision to download from (e.g., "main", "v1.0"). Defaults to None.
+            local_dir (str, optional): Local directory to download the file to. If None, uses cache.
+            cache_dir (str, optional): Directory to use for caching. If None, uses default cache directory.
+            force_download (bool, optional): Whether to force re-download even if file exists in cache. Defaults to False.
+        """
+        super().__init__()
+        self.repo_id = repo_id
+        self.filename = filename
+        self.repo_type = repo_type
+        self.revision = revision
+        self.local_dir = local_dir
+        self.cache_dir = cache_dir
+        self.force_download = force_download
+        self._is_running = True
+
+    def run(self):
+        """
+        Executes the download process.
+        """
+        if not self._is_running:
+            self.finished.emit("", False)
+            return
+
+        self.started.emit()
+
+        try:
+            file_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=self.filename,
+                repo_type=self.repo_type,
+                revision=self.revision,
+                local_dir=self.local_dir,
+                cache_dir=self.cache_dir,
+                force_download=self.force_download
+            )
+
+            if self._is_running:
+                self.finished.emit(file_path, True)
+            else:
+                # If the download was stopped mid-way (unlikely with hf_hub_download)
+                self.finished.emit(file_path, False)
+
+        except Exception as e:
+            error_message = f"Hugging Face Hub HTTP Error: {str(e)}"
+            self.error.emit(error_message)
+            self.finished.emit("", False)
+        except Exception as e:
+            error_message = f"Download failed: {str(e)}"
+            self.error.emit(error_message)
+            self.finished.emit("", False)
+
+    def stop(self):
+        """
+        Stops the download process. Note: hf_hub_download doesn't support interruption,
+        so this method sets a flag that can be checked before starting a new download.
+        """
+        self._is_running = False

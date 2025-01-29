@@ -1,0 +1,34 @@
+{
+    "models": [
+        {
+            "name": "LTX-Video",
+            "download_url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.1.safetensors",
+            "type": "checkpoints",
+            "filename": "ltx-video-2b-v0.9.1.safetensors"
+        },
+        {
+            "name": "FLUX Text Encoder T5xxl",
+            "download_url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors",
+            "type": "text_encoders",
+            "filename": "t5xxl_fp8_e4m3fn_scaled.safetensors"
+        },
+        {
+            "name": "FLUX Dev Diffusion Model",
+            "download_url": "https://huggingface.co/comfyanonymous/flux_dev_scaled_fp8_test/resolve/main/flux_dev_fp8_scaled_diffusion_model.safetensors",
+            "type": "diffusion_models",
+            "filename": "flux_dev_fp8_scaled_diffusion_model.safetensors"
+        },
+        {
+            "name": "CLIP L",
+            "download_url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+            "type": "text_encoders",
+            "filename": "clip_l.safetensors"
+        },
+        {
+            "name": "FLUX VAE",
+            "download_url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors",
+            "type": "vae",
+            "filename": "ae.safetensors"
+        }
+    ]
+}
