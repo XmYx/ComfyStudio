@@ -574,6 +574,25 @@ class ReorderableListWidget(QWidget):
         self.setMouseTracking(True)
         self.listWidget.setMouseTracking(True)
 
+        self.listWidget.model().rowsMoved.connect(self.onRowsMoved)
+    def onRowsMoved(self, parent, start, end, destination, row):
+        """
+        Slot to handle the reordering of shots when rows are moved in the QListWidget.
+        Moves the corresponding shot in the shots list to reflect the new order.
+        """
+        if start == end:
+            try:
+                # Retrieve the moving shot from the shots list
+                moving_shot = self.parent_window.shots.pop(start)
+                # Determine the new insertion index
+                insert_at = row if row <= start else row - 1
+                # Insert the shot at the new position
+                self.parent_window.shots.insert(insert_at, moving_shot)
+                # Update the QListWidget to reflect the new order
+                self.parent_window.updateList()
+            except IndexError:
+                # Handle potential index errors gracefully
+                pass
     def updateTexts(self):
         """
         Update all translatable texts in the ReorderableListWidget.
