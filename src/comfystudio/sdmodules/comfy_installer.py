@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 
+from PyQt6.QtWidgets import QInputDialog
 from qtpy.QtCore import (
     QObject,
     Signal,
@@ -24,7 +25,9 @@ from qtpy.QtWidgets import (
     QWizardPage,
     QRadioButton,
     QButtonGroup,
-    QProgressBar
+    QProgressBar,
+    QGroupBox,
+    QFormLayout
 )
 
 
@@ -51,11 +54,15 @@ class QtLogHandler(logging.Handler):
 class ComfyInstallerWizard(QWizard):
     """
     A wizard to install or update ComfyUI and its dependencies.
+    Enhanced to support:
+        - Selection between Conda environments, System Python venv, or Custom Python executable.
+        - Automatic creation of virtual environments.
+        - Setting paths in SettingsManager automatically.
     Steps:
-        1. Select Python Environment
+        1. Select Python Environment Type and Setup
         2. Select ComfyUI Installation Directory
         3. Clone ComfyUI Repository
-        4. Install Torch Based on GPU Architecture
+        4. Select GPU Architecture and Install PyTorch
         5. Install ComfyUI Dependencies
     """
 
@@ -68,6 +75,7 @@ class ComfyInstallerWizard(QWizard):
         self.log_callback = log_callback  # Function to append logs to UI
 
         # Initialize variables to store user selections
+        self.selected_env_type = ""
         self.selected_env_path = ""
         self.comfyui_install_dir = ""
         self.git_clone_success = False
@@ -103,73 +111,158 @@ class ComfyInstallerWizard(QWizard):
         Override accept to perform final actions after the wizard is completed.
         """
         # After successful installation, set the ComfyUI main.py path in settings
-        main_py_path = os.path.join(self.comfyui_install_dir, "main.py")
-        if os.path.isfile(main_py_path):
+        main_py_path = os.path.join(self.comfyui_install_dir, "ComfyUI", "main.py")
+        python_executable = self.selected_env_path
+
+        if os.path.isfile(main_py_path) and os.path.isfile(python_executable):
             self.settings_manager.set("comfy_main_path", main_py_path)
-            self.settings_manager.set("comfy_py_path", self.selected_env_path)
+            self.settings_manager.set("comfy_py_path", python_executable)
             self.settings_manager.save()
             QMessageBox.information(self, "Success", "ComfyUI has been installed/updated successfully.")
             super().accept()
         else:
-            QMessageBox.warning(self, "Error", "main.py not found in the installation directory. Installation may have failed.")
+            QMessageBox.warning(self, "Error",
+                                "main.py or Python executable not found in the installation directory. Installation may have failed.")
             super().reject()
 
 
 class EnvSelectionPage(QWizardPage):
     """
-    Page 1: Select Python Environment
+    Page 1: Select Python Environment Type and Setup
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("Select Python Environment")
-        self.setSubTitle("Choose an existing Python environment or specify a custom path.")
+        self.setSubTitle("Choose the type of Python environment to use for ComfyUI.")
 
         layout = QVBoxLayout()
 
-        self.env_combo = QComboBox()
-        self.env_combo.setToolTip("Select a Python environment to use for ComfyUI.")
-        self.refresh_envs()
+        # Environment Type Selection
+        self.env_type_group = QButtonGroup(self)
 
-        self.refresh_btn = QPushButton("Refresh Environments")
-        self.refresh_btn.setToolTip("Refresh the list of available Python environments.")
-        self.refresh_btn.clicked.connect(self.refresh_envs)
+        self.conda_radio = QRadioButton("Use Conda Environment")
+        self.venv_radio = QRadioButton("Use System Python Virtual Environment")
+        self.custom_radio = QRadioButton("Use Custom Python Executable")
 
-        self.custom_path_edit = QLineEdit()
-        self.custom_path_edit.setPlaceholderText("Enter custom Python executable path...")
-        self.browse_btn = QPushButton("Browse")
-        self.browse_btn.setToolTip("Browse to select a custom Python executable.")
-        self.browse_btn.clicked.connect(self.browse_custom_path)
+        self.env_type_group.addButton(self.conda_radio)
+        self.env_type_group.addButton(self.venv_radio)
+        self.env_type_group.addButton(self.custom_radio)
 
-        custom_layout = QHBoxLayout()
-        custom_layout.addWidget(self.custom_path_edit)
-        custom_layout.addWidget(self.browse_btn)
+        layout.addWidget(QLabel("Select Python Environment Type:"))
+        layout.addWidget(self.conda_radio)
+        layout.addWidget(self.venv_radio)
+        layout.addWidget(self.custom_radio)
 
-        layout.addWidget(QLabel("Available Python Environments:"))
-        layout.addWidget(self.env_combo)
-        layout.addWidget(self.refresh_btn)
-        layout.addSpacing(20)
-        layout.addWidget(QLabel("Or specify a custom Python executable:"))
-        layout.addLayout(custom_layout)
+        # Conda Environment Setup
+        self.conda_group = QGroupBox("Conda Environment Setup")
+        self.conda_layout = QFormLayout()
+
+        self.existing_conda_combo = QComboBox()
+        self.refresh_conda_envs_btn = QPushButton("Refresh Conda Environments")
+        self.refresh_conda_envs_btn.clicked.connect(self.refresh_conda_envs)
+        self.create_new_conda_btn = QPushButton("Create New Conda Environment")
+        self.create_new_conda_btn.clicked.connect(self.create_new_conda_env)
+
+        self.conda_layout.addRow(QLabel("Existing Conda Environments:"))
+        self.conda_layout.addRow(self.existing_conda_combo)
+        self.conda_layout.addRow(self.refresh_conda_envs_btn)
+        self.conda_layout.addRow(self.create_new_conda_btn)
+
+        self.conda_group.setLayout(self.conda_layout)
+        self.conda_group.setVisible(False)
+        layout.addWidget(self.conda_group)
+
+        # System Venv Setup
+        self.venv_group = QGroupBox("System Python Virtual Environment Setup")
+        self.venv_layout = QFormLayout()
+
+        self.python_exe_edit = QLineEdit()
+        self.browse_python_btn = QPushButton("Browse")
+        self.browse_python_btn.clicked.connect(self.browse_python_executable)
+
+        python_layout = QHBoxLayout()
+        python_layout.addWidget(self.python_exe_edit)
+        python_layout.addWidget(self.browse_python_btn)
+
+        self.venv_dir_edit = QLineEdit()
+        self.browse_venv_dir_btn = QPushButton("Browse")
+        self.browse_venv_dir_btn.clicked.connect(self.browse_venv_directory)
+
+        venv_layout = QHBoxLayout()
+        venv_layout.addWidget(self.venv_dir_edit)
+        venv_layout.addWidget(self.browse_venv_dir_btn)
+
+        self.venv_layout.addRow(QLabel("Python Executable:"))
+        self.venv_layout.addRow(python_layout)
+        self.venv_layout.addRow(QLabel("Virtual Environment Directory:"))
+        self.venv_layout.addRow(venv_layout)
+
+        self.venv_group.setLayout(self.venv_layout)
+        self.venv_group.setVisible(False)
+        layout.addWidget(self.venv_group)
+
+        # Custom Python Executable Setup
+        self.custom_group = QGroupBox("Custom Python Executable Setup")
+        self.custom_layout = QFormLayout()
+
+        self.custom_python_edit = QLineEdit()
+        self.browse_custom_python_btn = QPushButton("Browse")
+        self.browse_custom_python_btn.clicked.connect(self.browse_custom_python_executable)
+
+        custom_python_layout = QHBoxLayout()
+        custom_python_layout.addWidget(self.custom_python_edit)
+        custom_python_layout.addWidget(self.browse_custom_python_btn)
+
+        self.custom_layout.addRow(QLabel("Custom Python Executable:"))
+        self.custom_layout.addRow(custom_python_layout)
+
+        self.custom_group.setLayout(self.custom_layout)
+        self.custom_group.setVisible(False)
+        layout.addWidget(self.custom_group)
 
         self.setLayout(layout)
 
-    def refresh_envs(self):
+        # Connect radio buttons
+        self.conda_radio.toggled.connect(self.on_env_type_changed)
+        self.venv_radio.toggled.connect(self.on_env_type_changed)
+        self.custom_radio.toggled.connect(self.on_env_type_changed)
+
+        # Initial population
+        self.refresh_conda_envs()
+
+    def on_env_type_changed(self):
         """
-        Populate the env_combo with available Python environments.
-        For simplicity, this example searches common conda environments.
+        Show/hide setup groups based on selected environment type.
         """
-        self.env_combo.clear()
+        if self.conda_radio.isChecked():
+            self.conda_group.setVisible(True)
+            self.venv_group.setVisible(False)
+            self.custom_group.setVisible(False)
+        elif self.venv_radio.isChecked():
+            self.conda_group.setVisible(False)
+            self.venv_group.setVisible(True)
+            self.custom_group.setVisible(False)
+        elif self.custom_radio.isChecked():
+            self.conda_group.setVisible(False)
+            self.venv_group.setVisible(False)
+            self.custom_group.setVisible(True)
+
+    def refresh_conda_envs(self):
+        """
+        Populate the existing_conda_combo with available Conda environments.
+        """
+        self.existing_conda_combo.clear()
         conda_envs = self.get_conda_envs()
         if conda_envs:
             for env in conda_envs:
-                self.env_combo.addItem(env['name'], env['python'])
+                self.existing_conda_combo.addItem(env['name'], env['python'])
         else:
-            self.env_combo.addItem("No conda environments found.")
+            self.existing_conda_combo.addItem("No Conda environments found.")
 
     def get_conda_envs(self):
         """
-        Retrieve a list of conda environments.
+        Retrieve a list of Conda environments.
         """
         try:
             result = subprocess.run(
@@ -181,49 +274,180 @@ class EnvSelectionPage(QWizardPage):
             )
             env_data = json.loads(result.stdout)
             envs = []
-            for name, path in env_data.get("envs", []):
+            for path in env_data.get("envs", []):
+                name = os.path.basename(path)
                 python_executable = os.path.join(path, "python.exe" if sys.platform.startswith("win") else "bin/python")
                 if os.path.isfile(python_executable):
                     envs.append({"name": name, "python": python_executable})
             return envs
         except Exception as e:
+            logging.error(f"Error retrieving Conda environments: {e}")
             return []
 
-    def browse_custom_path(self):
+    def create_new_conda_env(self):
         """
-        Open a file dialog to select a custom Python executable.
+        Create a new Conda environment based on user input.
+        """
+        name, ok = QInputDialog.getText(self, "Create New Conda Environment", "Enter name for the new Conda environment:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        python_version, ok = QInputDialog.getText(
+            self,
+            "Python Version",
+            "Enter Python version for the new environment (e.g., 3.9):",
+            text="3.9"
+        )
+        if not ok or not python_version.strip():
+            return
+        python_version = python_version.strip()
+
+        # Start creating the Conda environment
+        try:
+            self.log_message(f"Creating new Conda environment '{name}' with Python {python_version}...")
+            result = subprocess.run(
+                ["conda", "create", "-n", name, f"python={python_version}", "-y"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            self.log_message(result.stdout)
+            QMessageBox.information(self, "Success", f"Conda environment '{name}' created successfully.")
+            self.refresh_conda_envs()
+            # Select the newly created environment
+            index = self.existing_conda_combo.findText(name)
+            if index != -1:
+                self.existing_conda_combo.setCurrentIndex(index)
+        except subprocess.CalledProcessError as e:
+            self.log_message(e.stderr)
+            QMessageBox.warning(self, "Error", f"Failed to create Conda environment '{name}':\n{e.stderr}")
+
+    def browse_python_executable(self):
+        """
+        Browse to select a Python executable for system venv.
         """
         options = QFileDialog.Options()
         file_filter = "Python Executable (python.exe python)"
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Python Executable", "", file_filter, options=options)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Python Executable",
+            "",
+            file_filter,
+            options=options
+        )
         if file_path:
-            self.custom_path_edit.setText(file_path)
+            self.python_exe_edit.setText(file_path)
+
+    def browse_venv_directory(self):
+        """
+        Browse to select a directory for the virtual environment.
+        """
+        options = QFileDialog.Options()
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Virtual Environment Directory",
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+        )
+        if directory:
+            self.venv_dir_edit.setText(directory)
+
+    def browse_custom_python_executable(self):
+        """
+        Browse to select a custom Python executable.
+        """
+        options = QFileDialog.Options()
+        file_filter = "Python Executable (python.exe python)"
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Custom Python Executable",
+            "",
+            file_filter,
+            options=options
+        )
+        if file_path:
+            self.custom_python_edit.setText(file_path)
 
     def validatePage(self):
         """
         Validate user input before proceeding to the next page.
         """
-        # Ensure that either an environment is selected or a custom path is provided
-        selected_env = self.env_combo.currentData()
-        custom_path = self.custom_path_edit.text().strip()
-
-        if selected_env and os.path.isfile(selected_env):
-            self.complete = True
-            self.selected_python = selected_env
-            return True
-        elif custom_path and os.path.isfile(custom_path):
-            self.complete = True
-            self.selected_python = custom_path
+        if self.conda_radio.isChecked():
+            selected_env = self.existing_conda_combo.currentData()
+            if selected_env and os.path.isfile(selected_env):
+                self.wizard().selected_env_path = selected_env
+                self.wizard().selected_env_type = "conda"
+                return True
+            else:
+                QMessageBox.warning(self, "Input Error", "Please select a valid Conda environment.")
+                return False
+        elif self.venv_radio.isChecked():
+            python_exe = self.python_exe_edit.text().strip()
+            venv_dir = self.venv_dir_edit.text().strip()
+            if not python_exe or not os.path.isfile(python_exe):
+                QMessageBox.warning(self, "Input Error", "Please select a valid Python executable for the virtual environment.")
+                return False
+            if not venv_dir:
+                QMessageBox.warning(self, "Input Error", "Please select a directory for the virtual environment.")
+                return False
+            # Check if venv already exists
+            activate_script = os.path.join(
+                venv_dir, "Scripts", "activate.bat" if sys.platform.startswith("win") else "bin/activate"
+            )
+            if os.path.isdir(venv_dir) and os.path.isfile(activate_script):
+                QMessageBox.warning(self, "Input Error", "A virtual environment already exists at the selected directory.")
+                return False
+            # Create the virtual environment
+            try:
+                self.log_message(f"Creating virtual environment at '{venv_dir}' using Python '{python_exe}'...")
+                subprocess.run(
+                    [python_exe, "-m", "venv", venv_dir],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                self.log_message(f"Virtual environment created at '{venv_dir}'.")
+                QMessageBox.information(self, "Success", f"Virtual environment created at '{venv_dir}'.")
+                # Set the selected_env_path to the venv's python executable
+                if sys.platform.startswith("win"):
+                    self.wizard().selected_env_path = os.path.join(venv_dir, "Scripts", "python.exe")
+                else:
+                    self.wizard().selected_env_path = os.path.join(venv_dir, "bin", "python")
+                self.wizard().selected_env_type = "venv"
+                return True
+            except subprocess.CalledProcessError as e:
+                self.log_message(e.stderr)
+                QMessageBox.warning(self, "Error", f"Failed to create virtual environment:\n{e.stderr}")
+                return False
+        elif self.custom_radio.isChecked():
+            custom_python = self.custom_python_edit.text().strip()
+            if not custom_python or not os.path.isfile(custom_python):
+                QMessageBox.warning(self, "Input Error", "Please select a valid custom Python executable.")
+                return False
+            self.wizard().selected_env_path = custom_python
+            self.wizard().selected_env_type = "custom"
             return True
         else:
-            QMessageBox.warning(self, "Input Error", "Please select a valid Python environment or provide a valid Python executable path.")
+            QMessageBox.warning(self, "Input Error", "Please select a Python environment type.")
             return False
 
     def get_selected_python(self):
         """
         Retrieve the selected Python executable path.
         """
-        return getattr(self, 'selected_python', "")
+        return getattr(self, 'selected_env_path', "")
+
+    def log_message(self, message):
+        """
+        Log messages to the main application's log.
+        """
+        if self.wizard().log_callback:
+            self.wizard().log_callback(message)
+        else:
+            print(message)
 
 
 class ComfyUIInstallPage(QWizardPage):
@@ -258,7 +482,12 @@ class ComfyUIInstallPage(QWizardPage):
         Open a directory selection dialog.
         """
         options = QFileDialog.Options()
-        directory = QFileDialog.getExistingDirectory(self, "Select Installation Directory", "", options=options)
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Installation Directory",
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+        )
         if directory:
             self.install_dir_edit.setText(directory)
 
@@ -279,7 +508,8 @@ class ComfyUIInstallPage(QWizardPage):
                 QMessageBox.warning(self, "Directory Error", f"Failed to create directory: {e}")
                 return False
 
-        self.selected_install_dir = install_dir
+        # Assign the selected directory to the wizard's attribute
+        self.wizard().comfyui_install_dir = install_dir
         return True
 
     def get_install_dir(self):
@@ -287,7 +517,6 @@ class ComfyUIInstallPage(QWizardPage):
         Retrieve the selected installation directory.
         """
         return getattr(self, 'selected_install_dir', "")
-
 
 class CloningPage(QWizardPage):
     """
@@ -362,10 +591,18 @@ class CloningPage(QWizardPage):
             QMessageBox.warning(self, "Cloning Error", "Failed to clone or update the ComfyUI repository.")
             return False
 
+    def log_message(self, message):
+        """
+        Log messages to the main application's log.
+        """
+        if self.wizard().log_callback:
+            self.wizard().log_callback(message)
+        else:
+            print(message)
 
 class TorchInstallPage(QWizardPage):
     """
-    Page 4: Install Torch Based on GPU Architecture
+    Page 4: Select GPU Architecture and Install PyTorch
     """
 
     def __init__(self, parent=None):
@@ -376,6 +613,8 @@ class TorchInstallPage(QWizardPage):
         layout = QVBoxLayout()
 
         self.gpu_group = QButtonGroup(self)
+        self.gpu_group.setExclusive(True)
+
         self.amd_radio = QRadioButton("AMD GPU (Linux only)")
         self.intel_native_radio = QRadioButton("Intel GPU (Native)")
         self.intel_extension_radio = QRadioButton("Intel GPU (IPEX)")
@@ -383,7 +622,7 @@ class TorchInstallPage(QWizardPage):
         self.directml_radio = QRadioButton("DirectML (AMD on Windows)")
         self.ascend_radio = QRadioButton("Ascend NPU")
         self.apple_radio = QRadioButton("Apple Mac Silicon")
-        self.other_radio = QRadioButton("Other / No GPU")
+        self.cpu_radio = QRadioButton("Other / No GPU")
 
         self.gpu_group.addButton(self.amd_radio)
         self.gpu_group.addButton(self.intel_native_radio)
@@ -392,7 +631,7 @@ class TorchInstallPage(QWizardPage):
         self.gpu_group.addButton(self.directml_radio)
         self.gpu_group.addButton(self.ascend_radio)
         self.gpu_group.addButton(self.apple_radio)
-        self.gpu_group.addButton(self.other_radio)
+        self.gpu_group.addButton(self.cpu_radio)
 
         layout.addWidget(QLabel("Select your GPU architecture:"))
         layout.addWidget(self.amd_radio)
@@ -402,7 +641,7 @@ class TorchInstallPage(QWizardPage):
         layout.addWidget(self.directml_radio)
         layout.addWidget(self.ascend_radio)
         layout.addWidget(self.apple_radio)
-        layout.addWidget(self.other_radio)
+        layout.addWidget(self.cpu_radio)
 
         self.install_btn = QPushButton("Install PyTorch")
         self.install_btn.clicked.connect(self.on_install_clicked)
@@ -432,6 +671,8 @@ class TorchInstallPage(QWizardPage):
         selection = selected_button.text()
         if selection == "AMD GPU (Linux only)":
             cmd = [
+                sys.executable,  # Use the selected Python executable
+                "-m",
                 "pip",
                 "install",
                 "torch",
@@ -443,6 +684,8 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch with ROCm 6.2 support..."
         elif selection == "Intel GPU (Native)":
             cmd = [
+                sys.executable,
+                "-m",
                 "pip",
                 "install",
                 "--pre",
@@ -455,16 +698,19 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch Nightly with XPU support..."
         elif selection == "Intel GPU (IPEX)":
             cmd = [
-                "conda",
+                sys.executable,
+                "-m",
+                "pip",
                 "install",
-                "libuv",
-                "-y"
+                "intel-extension-for-pytorch"
             ]
-            # After installing libuv, install IPEX
-            # This will be handled in the subprocess
             msg = "Installing Intel Extension for PyTorch (IPEX)..."
         elif selection == "NVIDIA GPU":
+            # Determine CUDA version based on available CUDA installations or user input
+            # For simplicity, we'll default to CUDA 12.4
             cmd = [
+                sys.executable,
+                "-m",
                 "pip",
                 "install",
                 "torch",
@@ -476,6 +722,8 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch with CUDA 12.4 support..."
         elif selection == "DirectML (AMD on Windows)":
             cmd = [
+                sys.executable,
+                "-m",
                 "pip",
                 "install",
                 "torch-directml"
@@ -490,6 +738,8 @@ class TorchInstallPage(QWizardPage):
             return
         elif selection == "Apple Mac Silicon":
             cmd = [
+                sys.executable,
+                "-m",
                 "pip",
                 "install",
                 "--pre",
@@ -502,6 +752,8 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch Nightly for Apple Mac Silicon..."
         elif selection == "Other / No GPU":
             cmd = [
+                sys.executable,
+                "-m",
                 "pip",
                 "install",
                 "torch",
@@ -538,9 +790,9 @@ class TorchInstallPage(QWizardPage):
         """
         Log messages to the main application's log.
         """
-        if self.parent():
-            if self.parent().log_callback:
-                self.parent().log_callback(message)
+        if self.wizard():
+            if self.wizard().log_callback:
+                self.wizard().log_callback(message)
             else:
                 print(message)
 
