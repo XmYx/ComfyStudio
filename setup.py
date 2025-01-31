@@ -16,7 +16,8 @@ setup(
         'requests',
         'qtpy',
         'opencv-contrib-python',
-        'av'
+        'av',
+        'huggingface-hub'
     ],
     entry_points={
         'console_scripts': [
