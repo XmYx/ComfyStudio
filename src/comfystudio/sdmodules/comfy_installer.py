@@ -929,9 +929,9 @@ class DependenciesInstallPage(QWizardPage):
         """
         Log messages to the main application's log.
         """
-        if self.parent():
-            if self.parent().log_callback:
-                self.parent().log_callback(message)
+        if self.wizard():
+            if self.wizard().log_callback:
+                self.wizard().log_callback(message)
             else:
                 print(message)
 
