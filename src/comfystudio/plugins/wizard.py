@@ -27,7 +27,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt
 
-from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
+from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
 
 
 def register(app):

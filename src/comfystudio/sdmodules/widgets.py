@@ -492,7 +492,7 @@ from qtpy.QtWidgets import (
     QListView
 )
 
-from comfystudio.sdmodules.dataclasses import Shot
+from comfystudio.sdmodules.cs_datastruts import Shot
 
 
 class ReorderableListWidget(QWidget):

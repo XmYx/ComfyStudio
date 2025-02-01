@@ -13,6 +13,7 @@ from typing import List, Dict
 
 import requests
 from PyQt6.QtCore import QThreadPool, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer
 
 from qtpy import QtCore
 
@@ -63,7 +64,7 @@ from qtpy.QtGui import (
 
 from comfystudio.sdmodules.aboutdialog import AboutDialog
 from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
-from comfystudio.sdmodules.dataclasses import Shot, WorkflowAssignment
+from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.model_manager import ModelManagerWindow
@@ -1089,19 +1090,29 @@ class MainWindow(QMainWindow, ShotManager):
             # self.player.setSource(QUrl.fromLocalFile(new_path))
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
-
+    def releaseMedia(self):
+        """
+        Slot to handle stopping and releasing the media player safely.
+        """
+        if hasattr(self, 'player') and isinstance(self.player, QMediaPlayer):
+            try:
+                self.player.stop()
+                self.player.setSource(None)  # Release the current media
+            except Exception as e:
+                # Log the exception if necessary
+                print(f"Error stopping/releasing media player: {e}")
     def onSelectionChanged(self):
         """
         Handles the event when the selection in the shots list widget changes.
         Ensures that the preview widget displays the last rendered still or video
         if no specific workflow was previously selected.
         """
-        self.clearDock()
+        # self.clearDock()
         try:
             self.player.stop()
-        except AttributeError:
+        except:
             pass  # Assuming 'player' might not be initialized yet
-
+        self.previewDock.release_media()
         selected_items = self.listWidget.selectedItems()
 
         if len(selected_items) == 1:
