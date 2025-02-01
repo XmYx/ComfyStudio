@@ -5,7 +5,8 @@ import os
 class LocalizationManager:
     def __init__(self, settings_manager, locales_dir=None):
         self.settings_manager = settings_manager
-        self.locales_dir = locales_dir or os.path.join(os.path.dirname(__file__), "..", "locales")
+        default_locales_dir = os.path.join(os.path.dirname(__file__), "..", "locales")
+        self.locales_dir = os.path.abspath(locales_dir or default_locales_dir)
         self.translations = {}
         self.current_language = "en"
         self.load_language(self.settings_manager.get("language", "en"))
