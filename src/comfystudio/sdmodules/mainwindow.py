@@ -74,6 +74,7 @@ from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
 from comfystudio.sdmodules.shot_manager import ShotManager
 from comfystudio.sdmodules.videotools import extract_frame
 from comfystudio.sdmodules.widgets import ReorderableListWidget
+from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
 from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
 
 
@@ -156,14 +157,14 @@ class MainWindow(QMainWindow, ShotManager):
 
         # Shots list
         self.listWidgetBase = ReorderableListWidget(self)
-        self.listWidgetBase.updateTexts()
-        self.listWidget = self.listWidgetBase.listWidget
+        # self.listWidgetBase.updateTexts()
+        self.listWidget = self.listWidgetBase.shotListView
         self.listWidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.listWidget.itemClicked.connect(self.onItemClicked)
         self.listWidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.listWidget.customContextMenuRequested.connect(self.onListWidgetContextMenu)
         self.listWidget.itemSelectionChanged.connect(self.onSelectionChanged)
-        self.mainLayout.addWidget(self.listWidgetBase)
+        # self.mainLayout.addWidget(self.listWidgetBase)
 
         # Dock for shot parameters
         self.dock = QDockWidget(self.localization.translate("shot_details"), self)
@@ -2830,6 +2831,10 @@ class MainWindow(QMainWindow, ShotManager):
     def isProjectSaved(self):
         # Check if currentFilePath is set and the project is not modified
         return hasattr(self, 'currentFilePath') and self.currentFilePath and not self.isProjectModified()
+
+    def keyPressEvent(self, event):
+        print("I Work INstead")
+
 
     def closeEvent(self, event):
         if self.isProjectModified():
