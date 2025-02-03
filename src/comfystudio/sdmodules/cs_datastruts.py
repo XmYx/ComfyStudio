@@ -45,6 +45,11 @@ class Shot:
     lastVideoSignature: str = ""
     workflows: List[WorkflowAssignment] = field(default_factory=list)
     params: List[Dict[str, Any]] = field(default_factory=list)
+    duration: int = 5
+    inPoint: float = 0.0  # fraction (0.0-1.0) for trimmed start
+    outPoint: float = 1.0  # fraction (0.0-1.0) for trimmed end
+    linkedAudio: bool = True  # whether the clip has a linked audio clip
+    thumbnail_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,7 +63,8 @@ class Shot:
             "lastStillSignature": self.lastStillSignature,
             "lastVideoSignature": self.lastVideoSignature,
             "workflows": [workflow.to_dict() for workflow in self.workflows],
-            "params": self.params
+            "params": self.params,
+            "duration": self.duration
         }
 
     @classmethod
@@ -76,7 +82,8 @@ class Shot:
             lastStillSignature=data.get('lastStillSignature', ""),
             lastVideoSignature=data.get('lastVideoSignature', ""),
             workflows=workflows,
-            params=data.get('params', [])
+            params=data.get('params', []),
+            duration=data.get('duration', 5)
         )
 
     def get(self, var, default=""):

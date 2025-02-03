@@ -117,7 +117,7 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
-    image: url(); /* Remove or replace with a valid path if needed */
+    /* image: url(); /* Remove or replace with a valid path if needed */
     width: 10px;
     height: 10px;
 }
@@ -216,7 +216,7 @@ QDockWidget::title {
 }
 
 QDockWidget::close-button, QDockWidget::float-button {
-    image: url(); /* Remove or replace with a valid path if needed */
+    /* image: url(); /* Remove or replace with a valid path if needed */
     width: 12px;
     height: 12px;
 }
