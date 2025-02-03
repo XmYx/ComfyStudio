@@ -16,7 +16,7 @@ REM Check if 'comfystudio' command exists
 where comfystudio >nul 2>&1
 IF ERRORLEVEL 1 (
     echo Installing comfystudio...
-    pip install .
+    pip install -e .
 ) ELSE (
     echo comfystudio is already installed.
 )

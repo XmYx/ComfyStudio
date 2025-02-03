@@ -14,7 +14,7 @@ pip install --upgrade pip
 # Check if 'comfystudio' command is available
 if ! command -v comfystudio &> /dev/null; then
     echo "Installing comfystudio..."
-    pip install .
+    pip install -e .
 else
     echo "comfystudio is already installed."
 fi
