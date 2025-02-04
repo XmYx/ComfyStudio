@@ -304,6 +304,72 @@ class ShotListView(QListWidget):
         print("[DEBUG] Cleared ShotListView")
 
 
+class TimelineNavigator(QWidget):
+    rangeChanged = Signal(float, float)  # Emits new work-area start and end times
+
+    def __init__(self, timeline_widget, parent=None):
+        super().__init__(parent)
+        self.timeline_widget = timeline_widget
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        # Initial visible range rectangle (navigator handle)
+        self.visible_range = QRect(5, 5, 100, self.height()-10)
+        self.dragging = False
+        self.resizing = False
+        self.drag_offset = 0
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        # Draw background
+        painter.fillRect(self.rect(), QColor(220,220,220))
+        # Draw full timeline area (light gray)
+        timeline_rect = QRect(5, 5, self.width()-10, self.height()-10)
+        painter.fillRect(timeline_rect, QColor(200,200,200))
+        # Draw the visible range (semi-transparent blue)
+        painter.setBrush(QColor(100,150,250,150))
+        painter.drawRect(self.visible_range)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if self.visible_range.contains(event.pos()):
+            # If near right edge, begin resizing
+            if abs(event.pos().x() - self.visible_range.right()) < 5:
+                self.resizing = True
+            else:
+                self.dragging = True
+                self.drag_offset = event.pos().x() - self.visible_range.x()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.dragging:
+            new_x = event.pos().x() - self.drag_offset
+            new_x = max(5, min(new_x, self.width()-10 - self.visible_range.width()))
+            self.visible_range.moveLeft(new_x)
+            self.update()
+            self.emitRangeChanged()
+        elif self.resizing:
+            new_width = event.pos().x() - self.visible_range.x()
+            new_width = max(20, min(new_width, self.width()-10 - self.visible_range.x()))
+            self.visible_range.setWidth(new_width)
+            self.update()
+            self.emitRangeChanged()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.dragging = False
+        self.resizing = False
+        event.accept()
+
+    def emitRangeChanged(self):
+        # Map the visible range rectangle (within [5, width()-5]) to a time range
+        full_length = self.timeline_widget.timeline_end if self.timeline_widget.timeline_end > 0 else 100.0
+        timeline_rect = QRect(5, 5, self.width()-10, self.height()-10)
+        start_ratio = (self.visible_range.x() - timeline_rect.x()) / timeline_rect.width()
+        end_ratio = (self.visible_range.right() - timeline_rect.x()) / timeline_rect.width()
+        start_time = full_length * start_ratio
+        end_time = full_length * end_ratio
+        self.rangeChanged.emit(start_time, end_time)
+
 ########################################################################
 # MultiTrackTimelineWidget: The multitrack timeline dock with enhanced tools
 ########################################################################
@@ -369,11 +435,29 @@ class MultiTrackTimelineWidget(QWidget):
         self.frameReadoutLabel = FrameReadoutLabel(self, self)
         self.frameReadoutLabel.setGeometry(self.left_panel_width, 0, self.width() - self.left_panel_width, self.ruler_height)
         self.frameReadoutLabel.show()
+
+        # Create the timeline navigator (for zoom and range selection)
+        self.navigator = TimelineNavigator(self, self)
+        self.navigator.setGeometry(0, self.height()-40, self.width(), 40)
+        self.navigator.rangeChanged.connect(self.onNavigatorRangeChanged)
+
         print("[DEBUG] MultiTrackTimelineWidget initialized")
+
+    def onNavigatorRangeChanged(self, start, end):
+        # Set work area to new range
+        self.work_area_start = start
+        self.work_area_end = end
+        # Optionally adjust scale so that the visible range fills the timeline area.
+        full_length = self.timeline_end if self.timeline_end > 0 else 100.0
+        # New scale is based on the width available divided by (end - start)
+        if (end - start) > 0:
+            self.scale = (self.width() - self.left_panel_width) / (end - start)
+        self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.frameReadoutLabel.setGeometry(self.left_panel_width, 0, self.width() - self.left_panel_width, self.ruler_height)
+        self.frameReadoutLabel.setGeometry(self.left_panel_width, 0, self.width()-self.left_panel_width, self.ruler_height)
+        self.navigator.setGeometry(0, self.height()-40, self.width(), 40)
 
     def clipRect(self, clip: TimelineClip) -> QRect:
         try:
@@ -464,12 +548,19 @@ class MultiTrackTimelineWidget(QWidget):
                         self.timeline_clips.remove(clip)
                         print(f"[DEBUG] Overlap: Removed clip '{clip.shot.name}' due to overlap with new clip")
 
+    # def updateTimelineRange(self):
+    #     if self.timeline_clips:
+    #         self.timeline_end = max(clip.start_time + clip.length for clip in self.timeline_clips)
+    #     else:
+    #         self.timeline_end = 0.0
+    #     # Auto-set work area end if not modified.
+    #     if self.work_area_end == 0.0:
+    #         self.work_area_end = self.timeline_end
     def updateTimelineRange(self):
         if self.timeline_clips:
             self.timeline_end = max(clip.start_time + clip.length for clip in self.timeline_clips)
         else:
             self.timeline_end = 0.0
-        # Auto-set work area end if not modified.
         if self.work_area_end == 0.0:
             self.work_area_end = self.timeline_end
 
