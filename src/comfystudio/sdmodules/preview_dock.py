@@ -15,7 +15,8 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import (
     Qt,
-    QUrl
+    QUrl,
+    Slot
 )
 from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
 from qtpy.QtMultimediaWidgets import QVideoWidget
@@ -297,51 +298,21 @@ class ShotPreviewDock(QDockWidget):
         if self.imageLabel.isVisible():
             self.updateScaledImage()
 
+    @Slot()
     def release_media(self):
-        """
-        Safely pause and release any media that might be playing or loading.
-        This method stops the media player, releases media resources, hides media widgets,
-        and resets UI elements to their default state.
-        """
         try:
-            # Stop the media player if it's playing
             self.player.stop()
-
-            # Release the media source
             self.player.setSource(QUrl())
-
-            # Optionally reset playback rate and volume if desired
             self.player.setPlaybackRate(1.0)
-            self.audioOutput.setVolume(0.8)  # Reset to default or desired value
-
-            # Hide both video and image widgets
+            self.audioOutput.setVolume(0.8)
             self.videoWidget.hide()
             self.imageLabel.hide()
-
-            # Clear the stored pixmap
             self.fullPixmap = None
-            self.imageLabel.setPixmap(QPixmap())  # Remove any displayed image
-
-            # Reset the timeline slider
+            self.imageLabel.setPixmap(QPixmap())
             self.timelineSlider.setValue(0)
             self.timelineSlider.setRange(0, 0)
-
-            # Update the info label to indicate no media is loaded
             self.infoLabel.setText("(No media)")
-
-            # Reset other UI elements if necessary
-            # For example, disable controls that are not relevant without media
-            # self.playBtn.setEnabled(False)
-            # self.pauseBtn.setEnabled(False)
-            # self.stopBtn.setEnabled(False)
-            # self.timelineSlider.setEnabled(False)
-            # self.volumeSlider.setEnabled(False)
-            # self.rateSpin.setEnabled(False)
-
-            # Optionally reset other states
             self.currentShot = None
             self.currentWorkflowIndex = -1
-
         except Exception as e:
-            # Log the exception or handle it as needed
             print(f"Error releasing media: {e}")

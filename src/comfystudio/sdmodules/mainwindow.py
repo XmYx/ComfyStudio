@@ -9,10 +9,10 @@ import sys
 import tempfile
 
 import urllib
-from typing import List, Dict
+from typing import List, Dict, Any
 
 import requests
-from PyQt6.QtCore import QThreadPool, QUrl
+from PyQt6.QtCore import QThreadPool, QUrl, QMetaObject
 from PyQt6.QtMultimedia import QMediaPlayer
 
 from qtpy import QtCore
@@ -72,6 +72,7 @@ from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
 from comfystudio.sdmodules.shot_manager import ShotManager
+from comfystudio.sdmodules.vareditor import GlobalVariablesEditor, DynamicParam, DynamicParamEditor
 from comfystudio.sdmodules.videotools import extract_frame
 from comfystudio.sdmodules.widgets import ReorderableListWidget
 from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
@@ -209,8 +210,21 @@ class MainWindow(QMainWindow, ShotManager):
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
 
         self.createWindowsMenu()
+        # NEW: Global variables dictionary (shared among DynamicParam editors)
+        self.global_vars: Dict[str, Any] = {}
+        # Instantiate the GlobalVariablesEditor widget (it self-registers)
+        self.globVarEditor = GlobalVariablesEditor(self)
+        self.globVarEditor.variablesChanged.connect(self.updateGlobalVariables)
+        # Add an action to open the Global Variables Editor from the menu bar
+        self.globalVarsAct = QAction("Edit Global Variables", self)
+        self.globalVarsAct.triggered.connect(self.openGlobalVariablesEditor)
+        self.menuBar().addAction(self.globalVarsAct)
+    def updateGlobalVariables(self, new_globals: Dict[str, Any]):
+        self.global_vars = new_globals
+        # Optionally refresh any UI elements that depend on globals
 
-
+    def openGlobalVariablesEditor(self):
+        self.globVarEditor.exec()
     def initWorkflowsTab(self):
         layout = self.workflowsLayout
 
@@ -331,7 +345,6 @@ class MainWindow(QMainWindow, ShotManager):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
         layout.addWidget(splitter)
-
 
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)
@@ -1091,6 +1104,7 @@ class MainWindow(QMainWindow, ShotManager):
             # self.player.setSource(QUrl.fromLocalFile(new_path))
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to change video version: {e}")
+
     def releaseMedia(self):
         """
         Slot to handle stopping and releasing the media player safely.
@@ -1102,86 +1116,58 @@ class MainWindow(QMainWindow, ShotManager):
             except Exception as e:
                 # Log the exception if necessary
                 print(f"Error stopping/releasing media player: {e}")
+
     def onSelectionChanged(self):
-        """
-        Handles the event when the selection in the shots list widget changes.
-        Ensures that the preview widget displays the last rendered still or video
-        if no specific workflow was previously selected.
-        """
-        # self.clearDock()
-        try:
-            self.player.stop()
-        except:
-            pass  # Assuming 'player' might not be initialized yet
-        self.previewDock.release_media()
+        # try:
+        #     self.player.stop()
+        # except Exception:
+        #     pass
+        QMetaObject.invokeMethod(self.previewDock, "release_media", Qt.ConnectionType.QueuedConnection)
         selected_items = self.listWidget.selectedItems()
 
         if len(selected_items) == 1:
             item = selected_items[0]
             idx = item.data(Qt.ItemDataRole.UserRole)
-
             if idx != -1:
                 self.currentShotIndex = idx
                 self.fillDock()
-
                 shot = self.shots[idx]
-
-                # Check if there's a previously selected workflow for this shot
                 if idx in self.lastSelectedWorkflowIndex:
                     last_wf_idx = self.lastSelectedWorkflowIndex[idx]
                     if 0 <= last_wf_idx < len(shot.workflows):
-                        # Reselect the previously selected workflow
                         self.workflowListWidget.setCurrentRow(last_wf_idx)
                         workflow_item = self.workflowListWidget.item(last_wf_idx)
                         if workflow_item:
                             self.onWorkflowItemClicked(workflow_item)
-
-                        # Emit signals to update the preview widget
                         self.shotSelected.emit(idx)
                         self.workflowSelected.emit(idx, last_wf_idx)
                     else:
-                        # Invalid workflow index, remove from lastSelectedWorkflowIndex
                         del self.lastSelectedWorkflowIndex[idx]
-
                 else:
-                    # No previously selected workflow; check for last rendered output
                     last_rendered_workflow_idx = None
-
-                    # Prioritize still over video
                     if shot.lastStillSignature:
-                        # Find the workflow that generated the last still image
                         for i, wf in enumerate(shot.workflows):
                             if wf.lastSignature == shot.lastStillSignature:
                                 last_rendered_workflow_idx = i
                                 break
-
                     if last_rendered_workflow_idx is None and shot.lastVideoSignature:
-                        # Find the workflow that generated the last video
                         for i, wf in enumerate(shot.workflows):
                             if wf.lastSignature == shot.lastVideoSignature:
                                 last_rendered_workflow_idx = i
                                 break
-
                     if last_rendered_workflow_idx is not None:
-                        # Select the workflow that generated the last output
                         self.workflowListWidget.setCurrentRow(last_rendered_workflow_idx)
                         workflow_item = self.workflowListWidget.item(last_rendered_workflow_idx)
                         if workflow_item:
                             self.onWorkflowItemClicked(workflow_item)
-
-                        # Emit signals to update the preview widget
                         self.shotSelected.emit(idx)
                         self.workflowSelected.emit(idx, last_rendered_workflow_idx)
                     else:
-                        # No workflow selected and no last rendered output
-                        # Emit shotSelected to ensure the preview is updated appropriately
                         self.shotSelected.emit(idx)
             else:
-                # Invalid shot index; reset selection
                 self.currentShotIndex = -1
                 self.clearDock()
         else:
-            # Multiple shots selected or no selection; reset selection
             self.currentShotIndex = -1
             self.clearDock()
     def onRenderSelected(self):
@@ -1294,7 +1280,13 @@ class MainWindow(QMainWindow, ShotManager):
 
     def createBasicParamWidget(self, param):
         ptype = param["type"]
-        pval = param["value"]
+        pval = param.get("value", None)
+        if pval is None and param.get("expression"):
+            try:
+                pval = eval(param["expression"], self.global_vars)
+            except Exception as e:
+                logging.error(f"Error evaluating expression '{param['expression']}' for param '{param['name']}': {e}")
+                pval = 0  # fallback
         if ptype == "int":
             w = QSpinBox()
             w.setRange(-2147483648, 2147483647)
@@ -1487,7 +1479,7 @@ class MainWindow(QMainWindow, ShotManager):
             clearDynOverride = menu.addAction("Clear Dynamic Override")
             setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
             setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
-
+            editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
             chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
             if chosen == setPrevImage:
                 param["usePrevResultImage"] = True
@@ -1522,14 +1514,45 @@ class MainWindow(QMainWindow, ShotManager):
                 self.setParamValueInShots(param, onlySelected=True, item=currentItem)
             elif chosen == setAllShotsAction:
                 self.setParamValueInShots(param, onlySelected=False, item=currentItem)
+            elif chosen == editDynamicParam:
+                # Create a DynamicParam from the existing param dictionary.
+                dyn_param = DynamicParam(
+                    name=param.get("name", ""),
+                    param_type=param.get("type", "string"),
+                    value=param.get("value", ""),
+                    expression=param.get("expression", ""),
+                    global_var=param.get("global_var", "")
+                )
+                editor = DynamicParamEditor(dyn_param, self.global_vars, self)
+                if editor.exec() == QDialog.DialogCode.Accepted:
+                    # Save the dynamic settings back into the parameter dictionary.
+                    param["value"] = dyn_param.value
+                    param["expression"] = dyn_param.expression
+                    param["global_var"] = dyn_param.global_var
+                    QMessageBox.information(self, "Info", "Dynamic parameter updated.")
         else:
             setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
             setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
+            editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
             chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
             if chosen == setAllSelectedShotsAction:
                 self.setParamValueInShots(param, onlySelected=True, item=currentItem)
             elif chosen == setAllShotsAction:
                 self.setParamValueInShots(param, onlySelected=False, item=currentItem)
+            elif chosen == editDynamicParam:
+                dyn_param = DynamicParam(
+                    name=param.get("name", ""),
+                    param_type=param.get("type", "string"),
+                    value=param.get("value", ""),
+                    expression=param.get("expression", ""),
+                    global_var=param.get("global_var", "")
+                )
+                editor = DynamicParamEditor(dyn_param, self.global_vars, self)
+                if editor.exec() == QDialog.DialogCode.Accepted:
+                    param["value"] = dyn_param.value
+                    param["expression"] = dyn_param.expression
+                    param["global_var"] = dyn_param.global_var
+                    QMessageBox.information(self, "Info", "Dynamic parameter updated.")
 
         # After making changes, re-fill the workflow item to show updated text
         # if the user re-opens the workflow item
