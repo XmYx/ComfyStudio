@@ -8,7 +8,7 @@ from qtpy.QtWidgets import (
 )
 
 from comfystudio.sdmodules.mainwindow import MainWindow
-from comfystudio.sdmodules.mainwindow_ui import ComfyStudioWindow
+from comfystudio.sdmodules.core.mainwindow import ComfyStudioWindow
 
 
 def main():
