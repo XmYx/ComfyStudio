@@ -201,7 +201,46 @@ class MainWindow(QMainWindow, ShotManager):
         self.previewDock.setObjectName("preview_dock")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.previewDock)
 
-        self.createMenuBar()
+        menu_config = {
+            "File": {
+                "title": "File",
+                "actions": [
+                    {"name": "newAct", "text": "New", "trigger": self.newProject},
+                    {"name": "openAct", "text": "Open", "trigger": self.openProject},
+                    {"name": "saveAct", "text": "Save", "trigger": self.saveProject},
+                    {"name": "saveAsAct", "text": "Save As", "trigger": self.saveProjectAs},
+                    {"name": "importAction", "text": "Import", "trigger": self.importShotsFromTxt},
+                    {"separator": True},
+                    {"name": "renderSelectedAct", "text": "Render Selected", "trigger": self.onRenderSelected},
+                    {"name": "renderAllAct", "text": "Render All", "trigger": self.onRenderAll},
+                    {"name": "saveDefaultsAct", "text": "Save Defaults", "trigger": self.onSaveWorkflowDefaults},
+                    # Recents submenu: note that actions list is empty and can be updated dynamically
+                    {"submenu": "Recents",
+                     "title": self.localization.translate("menu_recents", default="Recents"),
+                     "actions": []}
+                ]
+            },
+            "Settings": {
+                "title": "Settings",
+                "actions": [
+                    {"name": "openSettingsAct", "text": "Settings", "trigger": self.showSettingsDialog},
+                    {"name": "openModelManagerAct", "text": "Model Manager", "trigger": self.openModelManager},
+                    {"name": "setupComfyNodesAct", "text": "Setup Comfy Nodes", "trigger": self.setup_custom_nodes},
+                    {"name": "setupComfyAct", "text": "Setup Comfy", "trigger": self.startComfyInstallerWizard}
+                ]
+            },
+            "Help": {
+                "title": "Help",
+                "actions": [
+                    {"name": "userGuideAct", "text": "User Guide", "trigger": self.openUserGuide},
+                    {"separator": True},
+                    {"name": "aboutAct", "text": "About", "trigger": self.openAboutDialog}
+                ]
+            }
+        }
+        self.create_dynamic_menu_bar(menu_config)
+        self.updateRecentsMenu()
+        # self.createMenuBar()
         self.createToolBar()
         self.createStatusBar()
 
@@ -439,6 +478,81 @@ class MainWindow(QMainWindow, ShotManager):
                     # For non-string params, just show a no-op menu or skip
                     pass
 
+    def create_dynamic_menu_bar(self, menu_config):
+        """
+        Dynamically creates the menu bar from a configuration dict.
+
+        menu_config: dict in the following format:
+          {
+              "MenuName": {
+                  "title": "Menu Title",       # optional, defaults to key name
+                  "actions": [
+                      {
+                          "name": "actionName",      # unique key to reference the action
+                          "text": "Action Text",
+                          "trigger": self.someFunction  # function to call on trigger
+                      },
+                      {
+                          "separator": True          # to add a separator
+                      },
+                      {
+                          "submenu": "SubmenuKey",   # indicates a submenu is desired
+                          "title": "Submenu Title",    # optional, defaults to submenu key
+                          "actions": [ ... ]           # actions for the submenu (same structure)
+                      }
+                  ]
+              },
+              ...
+          }
+        """
+        # Clear the existing menu bar to avoid duplication
+        self.menuBar().clear()
+
+        # Dictionaries to optionally store menus and actions for later reference
+        self.menus = {}
+        self.actions = {}
+
+        for menu_key, menu_data in menu_config.items():
+            menu_title = menu_data.get("title", menu_key)
+            menu = QMenu(menu_title, self)
+
+            for item in menu_data.get("actions", []):
+                # Add a separator if specified
+                if item.get("separator"):
+                    menu.addSeparator()
+                # If item specifies a submenu, create it recursively
+                elif "submenu" in item:
+                    sub_title = item.get("title", item["submenu"])
+                    submenu = QMenu(sub_title, self)
+                    for subitem in item.get("actions", []):
+                        if subitem.get("separator"):
+                            submenu.addSeparator()
+                        else:
+                            action = QAction(self)
+                            action.setText(subitem.get("text", ""))
+                            if "trigger" in subitem and callable(subitem["trigger"]):
+                                action.triggered.connect(subitem["trigger"])
+                            submenu.addAction(action)
+                            # Save the action reference if a name is provided
+                            if "name" in subitem:
+                                self.actions[subitem["name"]] = action
+                    menu.addMenu(submenu)
+                    # Optionally store the submenu reference
+                    self.menus[item["submenu"]] = submenu
+                # Otherwise, create a normal action
+                else:
+                    action = QAction(self)
+                    action.setText(item.get("text", ""))
+                    if "trigger" in item and callable(item["trigger"]):
+                        action.triggered.connect(item["trigger"])
+                    menu.addAction(action)
+                    if "name" in item:
+                        self.actions[item["name"]] = action
+
+            self.menuBar().addMenu(menu)
+            self.menus[menu_key] = menu
+
+
     def createMenuBar(self):
         # Clear existing menu bar to prevent duplication
         self.menuBar().clear()
@@ -521,23 +635,25 @@ class MainWindow(QMainWindow, ShotManager):
         self.menuBar().addMenu(self.helpMenu)  # Add Help Menu
 
     def updateRecentsMenu(self):
-        self.recentsMenu.clear()
+
+        recentsMenu = self.menus['Recents']
+        recentsMenu.clear()
         recents = self.settingsManager.get("recent_files", [])
         if not recents:
             emptyItem = QAction(self.localization.translate("menu_recents_empty", default="No recent projects"), self)
             emptyItem.setEnabled(False)
-            self.recentsMenu.addAction(emptyItem)
+            recentsMenu.addAction(emptyItem)
         else:
             for filePath in recents:
                 action = QAction(os.path.basename(filePath), self)
                 action.setToolTip(filePath)
                 action.triggered.connect(lambda checked, path=filePath: self.openProjectFromPath(path))
-                self.recentsMenu.addAction(action)
+                recentsMenu.addAction(action)
             # Add separator and 'Clear Recents' option
-            self.recentsMenu.addSeparator()
+            recentsMenu.addSeparator()
             clearAction = QAction(self.localization.translate("menu_recents_clear", default="Clear Recents"), self)
             clearAction.triggered.connect(self.clearRecents)
-            self.recentsMenu.addAction(clearAction)
+            recentsMenu.addAction(clearAction)
 
     def addToRecents(self, filePath):
         recents = self.settingsManager.get("recent_files", [])
