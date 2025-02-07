@@ -1,87 +1,39 @@
 #!/usr/bin/env python
 import copy
-import json
-import logging
 import os
-import random
-import subprocess
-import sys
-import tempfile
 
-import urllib
-from typing import List, Dict
-
-import requests
-from PyQt6.QtCore import QThreadPool, QUrl, QMetaObject
-from PyQt6.QtGui import QPixmap, QIcon
-from PyQt6.QtMultimedia import QMediaPlayer
-
-from qtpy import QtCore
-
-from qtpy.QtGui import QCursor
-
-from qtpy.QtWidgets import (
-    QTextEdit,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QListWidgetItem,
-    QLineEdit,
-    QSpinBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFormLayout,
-    QDockWidget,
-    QPushButton,
-    QLabel,
-    QDialog,
-    QComboBox,
-    QMessageBox,
-    QCheckBox,
-    QTabWidget,
-    QAbstractItemView,
-    QListWidget,
-    QGroupBox,
-    QScrollArea,
-    QInputDialog,
-    QMenu,
-    QFrame,
-    QApplication,
-    QSplitter
-)
-
+from PyQt6.QtCore import QMetaObject
 from qtpy.QtCore import (
     Qt,
     QPoint,
-    QObject,
-    Signal,
-    Slot,
-    QThread
+    Signal
 )
-from qtpy.QtGui import (
-    QAction
+from qtpy.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QFormLayout,
+    QDockWidget,
+    QPushButton,
+    QDialog,
+    QComboBox,
+    QMessageBox,
+    QTabWidget,
+    QAbstractItemView,
+    QInputDialog
 )
 
-from comfystudio.sdmodules.aboutdialog import AboutDialog
-from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
 from comfystudio.sdmodules.contextmenuhelper import create_context_menu
 from comfystudio.sdmodules.core.comfyhandler import ComfyStudioShotManager
 from comfystudio.sdmodules.core.ui import ComfyStudioUI
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
-from comfystudio.sdmodules.help import HelpWindow
-from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.mainwindow_ui import ComfyStudioComfyHandler
-from comfystudio.sdmodules.model_manager import ModelManagerWindow
-from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
-from comfystudio.sdmodules.preview_dock import ShotPreviewDock
-from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
-from comfystudio.sdmodules.shot_manager import ShotManager
-from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
-from comfystudio.sdmodules.videotools import extract_frame
-from comfystudio.sdmodules.widgets import ReorderableListWidget
 from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
-from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
+from comfystudio.sdmodules.preview_dock import ShotPreviewDock
+from comfystudio.sdmodules.shot_manager import ShotManager
+# from comfystudio.sdmodules.widgets import ReorderableListWidget
+
 
 class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyHandler, ShotManager):
 
@@ -660,6 +612,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                 QMessageBox.information(self, "Info", "Parameter removed from the workflow.")
 
     def cleanUp(self):
+        self.saveWindowState()
         self.settingsManager.save()
         self.stopComfy()
 

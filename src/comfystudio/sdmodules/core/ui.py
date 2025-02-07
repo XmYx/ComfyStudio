@@ -1,25 +1,21 @@
 #!/usr/bin/env python
-import copy
 import json
 import logging
 import os
-import random
-import subprocess
 import sys
-import tempfile
 
-import urllib
-from typing import List, Dict
-
-import requests
-from PyQt6.QtCore import QThreadPool, QUrl, QMetaObject
+from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QPixmap, QIcon
-from PyQt6.QtMultimedia import QMediaPlayer
-
 from qtpy import QtCore
-
-from qtpy.QtGui import QCursor
-
+from qtpy.QtCore import (
+    Qt,
+    QObject,
+    Signal,
+    Slot
+)
+from qtpy.QtGui import (
+    QAction
+)
 from qtpy.QtWidgets import (
     QTextEdit,
     QMainWindow,
@@ -27,10 +23,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QListWidgetItem,
-    QLineEdit,
-    QSpinBox,
-    QDoubleSpinBox,
-    QFileDialog,
     QFormLayout,
     QDockWidget,
     QPushButton,
@@ -39,48 +31,22 @@ from qtpy.QtWidgets import (
     QComboBox,
     QMessageBox,
     QCheckBox,
-    QTabWidget,
     QAbstractItemView,
     QListWidget,
     QGroupBox,
     QScrollArea,
-    QInputDialog,
     QMenu,
-    QFrame,
     QApplication,
     QSplitter
 )
 
-from qtpy.QtCore import (
-    Qt,
-    QPoint,
-    QObject,
-    Signal,
-    Slot,
-    QThread
-)
-from qtpy.QtGui import (
-    QAction
-)
-
 from comfystudio.sdmodules.aboutdialog import AboutDialog
-from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
-from comfystudio.sdmodules.contextmenuhelper import create_context_menu
 from comfystudio.sdmodules.core.base import ComfyStudioBase
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
 from comfystudio.sdmodules.help import HelpWindow
-from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.model_manager import ModelManagerWindow
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
-from comfystudio.sdmodules.preview_dock import ShotPreviewDock
-from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
-from comfystudio.sdmodules.shot_manager import ShotManager
-from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
-from comfystudio.sdmodules.videotools import extract_frame
-from comfystudio.sdmodules.widgets import ReorderableListWidget
-from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
-from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
-
+from comfystudio.sdmodules.settings import SettingsDialog
 
 
 class EmittingStream(QObject):
@@ -971,6 +937,8 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         state_str = self.settingsManager.get("mainwindow_state", "")
         if state_str:
             self.restoreState(QtCore.QByteArray.fromBase64(state_str.encode("utf-8")))
+
+        print("Restored", )
 
     def saveWindowState(self):
         geometry_b64 = self.saveGeometry().toBase64().data().decode("utf-8")

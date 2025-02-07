@@ -7,7 +7,7 @@ from qtpy.QtWidgets import (
     QStyleFactory
 )
 
-from comfystudio.sdmodules.mainwindow import MainWindow
+# from comfystudio.sdmodules.mainwindow import MainWindow
 from comfystudio.sdmodules.core.mainwindow import ComfyStudioWindow
 
 
