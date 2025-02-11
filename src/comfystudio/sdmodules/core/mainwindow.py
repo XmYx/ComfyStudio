@@ -3,7 +3,7 @@ import copy
 import os
 import time
 
-from PyQt6.QtCore import QMetaObject, QEventLoop, QCoreApplication
+from PyQt6.QtCore import QMetaObject, QEventLoop, QCoreApplication, QMutex, QWaitCondition, QSemaphore, QObject, QThread
 from qtpy.QtCore import (
     Qt,
     QPoint,
@@ -36,17 +36,41 @@ from comfystudio.sdmodules.shot_manager import ShotManager
 # from comfystudio.sdmodules.widgets import ReorderableListWidget
 
 
+
+class ProcessApiRequestWorker(QObject):
+    finished = Signal(object)  # Emits the output path (or None on error)
+    error = Signal(object)     # Emits an exception or error message
+
+    def __init__(self, window, endpoint_config, image_data, parent=None):
+        super().__init__(parent)
+        self.window = window
+        self.endpoint_config = endpoint_config
+        self.image_data = image_data
+
+    def run(self):
+        try:
+            # Call your existing method (which uses a semaphore, etc.)
+            result = self.window.process_api_request_async(self.endpoint_config, self.image_data)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(e)
+
+
 class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyHandler, ShotManager):
 
     shotSelected = Signal(int)
     workflowSelected = Signal(int, int)
     shotRenderComplete = Signal(int, int, str, bool)
     apiRenderFinished = Signal()
+    apiSemaphoreRelease = Signal()
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.resize(1400, 900)
         self.setWindowTitle(self.localization.translate("app_title", default="Cinema Shot Designer"))
-
+        # self._api_mutex = QMutex()
+        # self._api_wait_condition = QWaitCondition()
+        self.apiSemaphoreRelease.connect(self._release_api_semaphore)
+        self._api_semaphore = QSemaphore(0)
         self.showHiddenParams = False  # Toggles display of hidden parameters
         self.global_vars = {}
         self.initUI()
@@ -57,6 +81,9 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
 
         self.loadPlugins()
 
+    def _release_api_semaphore(self):
+        """Slot to safely release the API semaphore in the main thread."""
+        self._api_semaphore.release()
 
     def initUI(self):
         central = QWidget()
@@ -212,6 +239,44 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         Saves the image, updates the API-flagged parameter, triggers rendering,
         and polls until the render is finished before returning the output file.
         """
+        """
+        Wraps the process_api_request call in its own QThread so that its semaphore wait
+        does not block the main thread. This method waits (using a local QEventLoop)
+        until the worker finishes and then returns the output file path.
+        """
+        # Create the worker and a new thread:
+        worker = ProcessApiRequestWorker(self, endpoint_config, image_data)
+        thread = QThread()
+        worker.moveToThread(thread)
+
+        # Use a local event loop to wait for the worker to finish.
+        loop = QEventLoop()
+        result_container = []
+
+        def handle_finished(result):
+            result_container.append(result)
+            loop.quit()
+
+        def handle_error(err):
+            result_container.append(None)
+            loop.quit()
+
+        worker.finished.connect(handle_finished)
+        worker.error.connect(handle_error)
+        thread.started.connect(worker.run)
+        thread.start()
+
+        # Run the event loop until the worker emits a signal.
+        loop.exec()
+
+        # Clean up the thread.
+        thread.quit()
+        thread.wait()
+
+        if result_container:
+            return result_container[0]
+        return None
+    def process_api_request_async(self, endpoint_config, image_data):
         try:
             import tempfile, os
             # Save the received image.
@@ -257,6 +322,17 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                 if time.time() - start_time > timeout:
                     print("[DEBUG] API render timeout.")
                     break
+
+            #TODO THE CURRENT IMPLEMENTAION FEELS SLOW, TEST WITH LARGE FILES, QUICK WF'S
+            # self._api_mutex.lock()
+            # timeout_ms = 60000  # 60 seconds
+            # self._api_wait_condition.wait(self._api_mutex, timeout_ms)
+            # self._api_mutex.unlock()
+
+            # TODO BLOCKING IMPLEMENTATION TYPE 2:
+            # if not self._api_semaphore.tryAcquire(1, 120000):  # wait for 60,000 ms
+            #     print("[DEBUG] API render timeout.")
+            #     return None
 
             # Check whether a still or video output file was produced.
             output_path = ""

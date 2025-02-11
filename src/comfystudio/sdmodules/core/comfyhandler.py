@@ -142,6 +142,7 @@ class ComfyStudioComfyHandler:
         if not selected_items:
             QMessageBox.warning(self, "Warning", "No shot selected to render.")
             self._api_render_done = True
+            # self.apiSemaphoreRelease.emit()
 
             return
 
@@ -186,6 +187,7 @@ class ComfyStudioComfyHandler:
         else:
             QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
             self._api_render_done = True
+            # self.apiSemaphoreRelease.emit()
 
             return
 
@@ -567,6 +569,17 @@ class ComfyStudioComfyHandler:
                 self.shotRenderComplete.emit(shotIndex, workflowIndex, new_full, (final_is_video or workflow.isVideo))
                 self._api_render_done = True
                 # self.apiRenderFinished.emit()
+                print("Releasing Now")
+
+                # self.apiSemaphoreRelease.emit()
+
+                print("Released")
+
+        # self.apiSemaphoreRelease.emit()
+
+        # self._api_mutex.lock()
+        # self._api_wait_condition.wakeAll()
+        # self._api_mutex.unlock()
 
         # Move on regardless of success/failure to next workflow in queue
         # self.workflowIndexInProgress += 1
