@@ -810,7 +810,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.videoWorkflowCombo.setCurrentIndex(idx)
 
     def loadPlugins(self):
-        plugins_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
+        plugins_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "plugins")
         if not os.path.isdir(plugins_dir):
             return
         sys.path.insert(0, plugins_dir)
@@ -821,6 +821,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                     module = __import__(modulename)
                     if hasattr(module, "register"):
                         module.register(self)
+                        print("Registered plugin: ", modulename)
                 except Exception as e:
                     print(f"Error loading plugin {modulename}: {e}")
         sys.path.pop(0)

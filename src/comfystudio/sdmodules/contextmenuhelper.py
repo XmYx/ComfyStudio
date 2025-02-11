@@ -35,6 +35,5 @@ def create_context_menu(parent, action_specs, pos: QPoint):
             action.triggered.connect(spec["callback"])
         menu.addAction(action)
         actions.append(action)
-
     # Execute the menu. It will pop up at the global position converted from pos.
     return menu.exec(parent.mapToGlobal(pos))

@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 import copy
 import os
+import time
 
-from PyQt6.QtCore import QMetaObject
+from PyQt6.QtCore import QMetaObject, QEventLoop, QCoreApplication
 from qtpy.QtCore import (
     Qt,
     QPoint,
@@ -40,21 +41,22 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
     shotSelected = Signal(int)
     workflowSelected = Signal(int, int)
     shotRenderComplete = Signal(int, int, str, bool)
-
+    apiRenderFinished = Signal()
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.resize(1400, 900)
         self.setWindowTitle(self.localization.translate("app_title", default="Cinema Shot Designer"))
 
         self.showHiddenParams = False  # Toggles display of hidden parameters
-
+        self.global_vars = {}
         self.initUI()
         self.loadWorkflows()
         self.updateList()
-        self.loadPlugins()
         self.restoreWindowState()
-
         self.connectSignals()
+
+        self.loadPlugins()
+
 
     def initUI(self):
         central = QWidget()
@@ -203,6 +205,113 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
         self.createWindowsMenu()
+
+    def process_api_request(self, endpoint_config, image_data):
+        """
+        Called by the API server when an external app sends an image.
+        Saves the image, updates the API-flagged parameter, triggers rendering,
+        and polls until the render is finished before returning the output file.
+        """
+        try:
+            import tempfile, os
+            # Save the received image.
+            tmp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp_file.write(image_data)
+            tmp_file.close()
+            received_image_path = tmp_file.name
+            print(f"[DEBUG] Received API image saved to: {received_image_path}")
+
+            # Ensure a shot is selected. If not, default to the first shot.
+            if self.currentShotIndex < 0 and self.shots:
+                self.currentShotIndex = 0
+            shot = self.shots[self.currentShotIndex]
+
+            # Update any workflow parameter flagged for API input.
+            api_param_found = False
+            for wf in shot.workflows:
+                for param in wf.parameters.get("params", []):
+                    if param.get("useApiImage") and param.get("dynamicOverrides", {}).get("type") == "api":
+                        param["value"] = received_image_path
+                        api_param_found = True
+                        break
+                if api_param_found:
+                    break
+
+            if not api_param_found:
+                print("[DEBUG] No workflow parameter found for API dynamic assignment.")
+                return None
+
+            # Reset our API render-done flag.
+            self._api_render_done = False
+
+            # Trigger rendering by calling your onRenderSelected function.
+            self.onRenderSelected()
+
+            # Poll until rendering is finished (or timeout after, say, 60 seconds).
+            start_time = time.time()
+            timeout = 60  # seconds
+            while not self._api_render_done:
+                # Allow the main event loop to process pending events/signals.
+                QCoreApplication.processEvents()
+                time.sleep(0.01)
+                if time.time() - start_time > timeout:
+                    print("[DEBUG] API render timeout.")
+                    break
+
+            # Check whether a still or video output file was produced.
+            output_path = ""
+            if shot.stillPath and os.path.exists(shot.stillPath):
+                output_path = shot.stillPath
+            elif shot.videoPath and os.path.exists(shot.videoPath):
+                output_path = shot.videoPath
+
+            print(f"[DEBUG] Returning output file: {output_path}")
+            return output_path
+
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "API Request Error", f"Error processing API request: {e}")
+            return None
+
+    # def process_api_request(self, endpoint_config, image_data):
+    #     """
+    #     This is called by the API server when an external app sends an image.
+    #     It saves the image, sets the dynamic image path parameter for the matching Shot's Workflow,
+    #     triggers that workflow (via executeWorkflow), and returns the generated output file.
+    #     """
+    #     try:
+    #         # Save the received image.
+    #         import tempfile
+    #         tmp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    #         tmp_file.write(image_data)
+    #         tmp_file.close()
+    #         received_image_path = tmp_file.name
+    #         print(f"[DEBUG] Received API image saved to: {received_image_path}")
+    #
+    #         # Find the currently selected shot and update any workflow parameter flagged for API input.
+    #         shot = self.shots[self.currentShotIndex]
+    #         matched = False
+    #         for wf in shot.workflows:
+    #             for param in wf.parameters.get("params", []):
+    #                 if param.get("useApiImage") and param.get("dynamicOverrides", {}).get("type") == "api":
+    #                     param["value"] = received_image_path
+    #                     matched = True
+    #                     # Trigger the workflow (you may choose to run only this workflow or all matching ones)
+    #                     self.executeWorkflow(self.currentShotIndex, shot.workflows.index(wf))
+    #                     break
+    #             if matched:
+    #                 break
+    #         if not matched:
+    #             print("[DEBUG] No workflow parameter found for API dynamic assignment.")
+    #             return None
+    #
+    #         # After execution, assume the shot's output (stillPath or videoPath) is updated.
+    #         output_path = shot.stillPath if shot.stillPath and os.path.exists(shot.stillPath) else ""
+    #         return output_path
+    #     except Exception as e:
+    #         from PyQt6.QtWidgets import QMessageBox
+    #         QMessageBox.warning(self, "API Request Error", f"Error processing API request: {e}")
+    #         return None
 
     def toggleWebBrowser(self, checked):
         """
@@ -418,51 +527,12 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                 paramType = param.get("type", "string")
 
                 # Only process string-type or overrideable parameters.
-                if paramType == "string":
-
-                    # Define callbacks for each menu action.
-                    def set_prev_image():
-                        param["usePrevResultImage"] = True
-                        param["usePrevResultVideo"] = False
-                        param["value"] = "(Awaiting previous workflow image)"
-                        QMessageBox.information(
-                            self,
-                            "Info",
-                            "This parameter is now flagged to use the previous workflow's image result."
-                        )
-
-                    def set_prev_video():
-                        param["usePrevResultVideo"] = True
-                        param["usePrevResultImage"] = False
-                        param["value"] = "(Awaiting previous workflow video)"
-                        QMessageBox.information(
-                            self,
-                            "Info",
-                            "This parameter is now flagged to use the previous workflow's video result."
-                        )
-
-                    def clear_dyn_override():
-                        param.pop("usePrevResultImage", None)
-                        param.pop("usePrevResultVideo", None)
-                        QMessageBox.information(self, "Info", "Dynamic override cleared.")
-
-                    # Build the list of menu actions.
-                    action_specs = [
-                        {
-                            "text": "Set Param to Previous Workflow's Image",
-                            "callback": set_prev_image
-                        },
-                        {
-                            "text": "Set Param to Previous Workflow's Video",
-                            "callback": set_prev_video
-                        },
-                        {
-                            "text": "Clear Dynamic Override",
-                            "callback": clear_dyn_override
-                        }
-                    ]
-
-                    # Use the helper to create and execute the menu.
+                if param.get("type", "string") == "string":
+                    from comfystudio.sdmodules.core.param_context_menu import get_param_context_action_specs
+                    # For debugging: print the current registry.
+                    from comfystudio.sdmodules.core.param_context_menu import _get_registry
+                    print("Current registry:", _get_registry())
+                    action_specs = get_param_context_action_specs(self, param)
                     create_context_menu(self, action_specs, pos)
                 else:
                     # For non-string parameters, no actions are provided.

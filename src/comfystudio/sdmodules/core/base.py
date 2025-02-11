@@ -5,80 +5,35 @@ import logging
 import os
 import random
 import subprocess
-import sys
 import tempfile
-
-import urllib
 from typing import List, Dict
 
-import requests
-from PyQt6.QtCore import QThreadPool, QUrl, QMetaObject
-from PyQt6.QtGui import QPixmap, QIcon
-from PyQt6.QtMultimedia import QMediaPlayer
-
-from qtpy import QtCore
-
+from qtpy.QtCore import (
+    Qt,
+    Slot
+)
 from qtpy.QtGui import QCursor
-
 from qtpy.QtWidgets import (
-    QTextEdit,
-    QMainWindow,
     QWidget,
-    QVBoxLayout,
     QHBoxLayout,
-    QListWidgetItem,
     QLineEdit,
     QSpinBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
-    QDockWidget,
-    QPushButton,
     QLabel,
     QDialog,
-    QComboBox,
     QMessageBox,
     QCheckBox,
-    QTabWidget,
-    QAbstractItemView,
-    QListWidget,
-    QGroupBox,
-    QScrollArea,
     QInputDialog,
     QMenu,
-    QFrame,
-    QApplication,
-    QSplitter
+    QFrame
 )
 
-from qtpy.QtCore import (
-    Qt,
-    QPoint,
-    QObject,
-    Signal,
-    Slot,
-    QThread
-)
-from qtpy.QtGui import (
-    QAction
-)
-
-from comfystudio.sdmodules.aboutdialog import AboutDialog
-from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
-from comfystudio.sdmodules.contextmenuhelper import create_context_menu
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
-from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.localization import LocalizationManager
-from comfystudio.sdmodules.model_manager import ModelManagerWindow
-from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
-from comfystudio.sdmodules.preview_dock import ShotPreviewDock
-from comfystudio.sdmodules.settings import SettingsManager, SettingsDialog
-from comfystudio.sdmodules.shot_manager import ShotManager
+from comfystudio.sdmodules.settings import SettingsManager
 from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
 from comfystudio.sdmodules.videotools import extract_frame
-from comfystudio.sdmodules.widgets import ReorderableListWidget
-from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
-from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
 
 
 class ComfyStudioBase:
@@ -353,101 +308,138 @@ class ComfyStudioBase:
             divider.setFrameShape(QFrame.Shape.HLine)
             divider.setFrameShadow(QFrame.Shadow.Sunken)
             self.workflowParamsLayout.addRow(divider)
+
     def onWorkflowParamContextMenu(self, pos, param):
         """
-        Right-click context menu for a single workflow param row in the Workflow tab.
-        Allows setting this param to use the previous workflow's image or video result.
+        Right-click context menu for a single workflow parameter row.
+        This version uses the dynamic registry to build the menu.
         """
         menu = QMenu(self)
-        currentItem = self.workflowListWidget.currentItem()
-        paramType = param.get("type", "string")
-        if paramType == "string":
-            setPrevImage = menu.addAction("Set Param to Previous Workflow's Image")
-            setPrevVideo = menu.addAction("Set Param to Previous Workflow's Video")
-            clearDynOverride = menu.addAction("Clear Dynamic Override")
-            setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
-            setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
-            editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
-            chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
-            if chosen == setPrevImage:
-                param["usePrevResultImage"] = True
-                param["usePrevResultVideo"] = False
-                param["value"] = "(Awaiting previous workflow image)"
-                param["dynamicOverrides"] = {
-                    "type": "shot",
-                    "shotIndex": self.currentShotIndex,
-                    "assetType": "image"
-                }
-                QMessageBox.information(self, "Info",
-                                        "This parameter is now flagged to use the previous workflow's image result."
-                                        )
-            elif chosen == setPrevVideo:
-                param["usePrevResultVideo"] = True
-                param["usePrevResultImage"] = False
-                param["value"] = "(Awaiting previous workflow video)"
-                param["dynamicOverrides"] = {
-                    "type": "shot",
-                    "shotIndex": self.currentShotIndex,
-                    "assetType": "video"
-                }
-                QMessageBox.information(self, "Info",
-                                        "This parameter is now flagged to use the previous workflow's video result."
-                                        )
-            elif chosen == clearDynOverride:
-                param.pop("usePrevResultImage", None)
-                param.pop("usePrevResultVideo", None)
-                param.pop("dynamicOverrides", None)
-                QMessageBox.information(self, "Info", "Dynamic override cleared.")
-            elif chosen == setAllSelectedShotsAction:
-                self.setParamValueInShots(param, onlySelected=True, item=currentItem)
-            elif chosen == setAllShotsAction:
-                self.setParamValueInShots(param, onlySelected=False, item=currentItem)
-            elif chosen == editDynamicParam:
-                # Create a DynamicParam from the existing param dictionary.
-                dyn_param = DynamicParam(
-                    name=param.get("name", ""),
-                    param_type=param.get("type", "string"),
-                    value=param.get("value", ""),
-                    expression=param.get("expression", ""),
-                    global_var=param.get("global_var", "")
-                )
-                editor = DynamicParamEditor(dyn_param, self.global_vars, self)
-                if editor.exec() == QDialog.DialogCode.Accepted:
-                    # Save the dynamic settings back into the parameter dictionary.
-                    param["value"] = dyn_param.value
-                    param["expression"] = dyn_param.expression
-                    param["global_var"] = dyn_param.global_var
-                    QMessageBox.information(self, "Info", "Dynamic parameter updated.")
+        from comfystudio.sdmodules.core.param_context_menu import _get_registry
+        registry = _get_registry()
+
+        print("Current Registry")
+
+        param_type = param.get("type", "string")
+        # For string-type parameters include all actions; for others, include only common ones.
+        if param_type == "string":
+            actions = [spec for spec in registry
+                       if "string" in spec.get("param_types", []) or "other" in spec.get("param_types", [])]
         else:
-            setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
-            setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
-            editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
-            chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
-            if chosen == setAllSelectedShotsAction:
-                self.setParamValueInShots(param, onlySelected=True, item=currentItem)
-            elif chosen == setAllShotsAction:
-                self.setParamValueInShots(param, onlySelected=False, item=currentItem)
-            elif chosen == editDynamicParam:
-                dyn_param = DynamicParam(
-                    name=param.get("name", ""),
-                    param_type=param.get("type", "string"),
-                    value=param.get("value", ""),
-                    expression=param.get("expression", ""),
-                    global_var=param.get("global_var", "")
-                )
-                editor = DynamicParamEditor(dyn_param, self.global_vars, self)
-                if editor.exec() == QDialog.DialogCode.Accepted:
-                    param["value"] = dyn_param.value
-                    param["expression"] = dyn_param.expression
-                    param["global_var"] = dyn_param.global_var
-                    QMessageBox.information(self, "Info", "Dynamic parameter updated.")
+            actions = [spec for spec in registry if "other" in spec.get("param_types", [])]
 
-        # After making changes, re-fill the workflow item to show updated text
-        # if the user re-opens the workflow item
-        # For immediate refresh, you can re-call onWorkflowItemClicked on the current item:
+        # Create the menu and map each QAction to its callback.
+        action_map = {}
+        for spec in actions:
+            act = menu.addAction(spec["text"])
+            # Bind the callback with (self, param) using a default-argument lambda.
+            action_map[act] = lambda cb=spec["callback"]: cb(self, param)
 
+        chosen = menu.exec(QCursor.pos())
+        if chosen in action_map:
+            action_map[chosen]()
+
+        # Refresh the workflow item display.
+        currentItem = self.workflowListWidget.currentItem()
         if currentItem:
             self.onWorkflowItemClicked(currentItem)
+    # def onWorkflowParamContextMenu(self, pos, param):
+    #     """
+    #     Right-click context menu for a single workflow param row in the Workflow tab.
+    #     Allows setting this param to use the previous workflow's image or video result.
+    #     """
+    #     menu = QMenu(self)
+    #     currentItem = self.workflowListWidget.currentItem()
+    #     paramType = param.get("type", "string")
+    #     if paramType == "string":
+    #         setPrevImage = menu.addAction("Set Param to Previous Workflow's Image")
+    #         setPrevVideo = menu.addAction("Set Param to Previous Workflow's Video")
+    #         clearDynOverride = menu.addAction("Clear Dynamic Override")
+    #         setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
+    #         setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
+    #         editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
+    #         chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
+    #         if chosen == setPrevImage:
+    #             param["usePrevResultImage"] = True
+    #             param["usePrevResultVideo"] = False
+    #             param["value"] = "(Awaiting previous workflow image)"
+    #             param["dynamicOverrides"] = {
+    #                 "type": "shot",
+    #                 "shotIndex": self.currentShotIndex,
+    #                 "assetType": "image"
+    #             }
+    #             QMessageBox.information(self, "Info",
+    #                                     "This parameter is now flagged to use the previous workflow's image result."
+    #                                     )
+    #         elif chosen == setPrevVideo:
+    #             param["usePrevResultVideo"] = True
+    #             param["usePrevResultImage"] = False
+    #             param["value"] = "(Awaiting previous workflow video)"
+    #             param["dynamicOverrides"] = {
+    #                 "type": "shot",
+    #                 "shotIndex": self.currentShotIndex,
+    #                 "assetType": "video"
+    #             }
+    #             QMessageBox.information(self, "Info",
+    #                                     "This parameter is now flagged to use the previous workflow's video result."
+    #                                     )
+    #         elif chosen == clearDynOverride:
+    #             param.pop("usePrevResultImage", None)
+    #             param.pop("usePrevResultVideo", None)
+    #             param.pop("dynamicOverrides", None)
+    #             QMessageBox.information(self, "Info", "Dynamic override cleared.")
+    #         elif chosen == setAllSelectedShotsAction:
+    #             self.setParamValueInShots(param, onlySelected=True, item=currentItem)
+    #         elif chosen == setAllShotsAction:
+    #             self.setParamValueInShots(param, onlySelected=False, item=currentItem)
+    #         elif chosen == editDynamicParam:
+    #             # Create a DynamicParam from the existing param dictionary.
+    #             dyn_param = DynamicParam(
+    #                 name=param.get("name", ""),
+    #                 param_type=param.get("type", "string"),
+    #                 value=param.get("value", ""),
+    #                 expression=param.get("expression", ""),
+    #                 global_var=param.get("global_var", "")
+    #             )
+    #             editor = DynamicParamEditor(dyn_param, self.global_vars, self)
+    #             if editor.exec() == QDialog.DialogCode.Accepted:
+    #                 # Save the dynamic settings back into the parameter dictionary.
+    #                 param["value"] = dyn_param.value
+    #                 param["expression"] = dyn_param.expression
+    #                 param["global_var"] = dyn_param.global_var
+    #                 QMessageBox.information(self, "Info", "Dynamic parameter updated.")
+    #     else:
+    #         setAllSelectedShotsAction = menu.addAction("Set All SELECTED Shots (this param)")
+    #         setAllShotsAction = menu.addAction("Set ALL Shots (this param)")
+    #         editDynamicParam = menu.addAction("Edit as Dynamic Parameter")
+    #         chosen = menu.exec(QCursor.pos())  # or mapToGlobal(pos) if needed
+    #         if chosen == setAllSelectedShotsAction:
+    #             self.setParamValueInShots(param, onlySelected=True, item=currentItem)
+    #         elif chosen == setAllShotsAction:
+    #             self.setParamValueInShots(param, onlySelected=False, item=currentItem)
+    #         elif chosen == editDynamicParam:
+    #             dyn_param = DynamicParam(
+    #                 name=param.get("name", ""),
+    #                 param_type=param.get("type", "string"),
+    #                 value=param.get("value", ""),
+    #                 expression=param.get("expression", ""),
+    #                 global_var=param.get("global_var", "")
+    #             )
+    #             editor = DynamicParamEditor(dyn_param, self.global_vars, self)
+    #             if editor.exec() == QDialog.DialogCode.Accepted:
+    #                 param["value"] = dyn_param.value
+    #                 param["expression"] = dyn_param.expression
+    #                 param["global_var"] = dyn_param.global_var
+    #                 QMessageBox.information(self, "Info", "Dynamic parameter updated.")
+    #
+    #     # After making changes, re-fill the workflow item to show updated text
+    #     # if the user re-opens the workflow item
+    #     # For immediate refresh, you can re-call onWorkflowItemClicked on the current item:
+    #
+    #     if currentItem:
+    #         self.onWorkflowItemClicked(currentItem)
+
+
     def setParamValueInShots(self, param: dict, onlySelected: bool, item):
         """
         Copies this param's current value to the same-named parameter in either:
