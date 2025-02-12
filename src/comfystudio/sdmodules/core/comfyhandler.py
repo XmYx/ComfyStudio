@@ -41,7 +41,6 @@ class ComfyStudioComfyHandler:
         self.comfy_thread = None
         self.comfy_worker = None
         self.comfy_running = False
-        self._api_render_done = False
         self.render_mode = "per_workflow"
         # For progressive workflow rendering
         self.workflowQueue = {}   # Maps shotIndex -> list of (workflowIndex) to process
@@ -140,11 +139,8 @@ class ComfyStudioComfyHandler:
         """
         selected_items = self.listWidget.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Warning", "No shot selected to render.")
-            self._api_render_done = True
-            # self.apiSemaphoreRelease.emit()
-
-            return
+            self.listWidget.setCurrentRow(0)
+            selected_items = self.listWidget.selectedItems()
 
         if len(selected_items) > 1:
             # Prompt the user to choose render mode
@@ -186,9 +182,6 @@ class ComfyStudioComfyHandler:
                         self.renderQueue.append((shot_idx, wf_idx))
         else:
             QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
-            self._api_render_done = True
-            # self.apiSemaphoreRelease.emit()
-
             return
 
         # Start rendering the new queue
@@ -567,19 +560,6 @@ class ComfyStudioComfyHandler:
 
                 # Notify other parts (e.g. preview dock)
                 self.shotRenderComplete.emit(shotIndex, workflowIndex, new_full, (final_is_video or workflow.isVideo))
-                self._api_render_done = True
-                # self.apiRenderFinished.emit()
-                print("Releasing Now")
-
-                # self.apiSemaphoreRelease.emit()
-
-                print("Released")
-
-        # self.apiSemaphoreRelease.emit()
-
-        # self._api_mutex.lock()
-        # self._api_wait_condition.wakeAll()
-        # self._api_mutex.unlock()
 
         # Move on regardless of success/failure to next workflow in queue
         # self.workflowIndexInProgress += 1
@@ -612,7 +592,6 @@ class ComfyStudioComfyHandler:
         self.status_widgets["statusMessage"].setText("Ready")
         # self.workflowIndexInProgress += 1
         # self.processNextWorkflow()
-        # self.apiRenderFinished.emit()
 
     def downloadComfyFile(self, comfy_filename):
         comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188").rstrip("/")
@@ -639,9 +618,6 @@ class ComfyStudioComfyHandler:
             return temp_path
         except:
             return None
-
-
-
     def stopRendering(self):
         """
         Stop any current rendering processes by clearing the queue
@@ -654,7 +630,6 @@ class ComfyStudioComfyHandler:
             self.activeWorker.stop()
             self.activeWorker = None
         self.status_widgets["statusMessage"].setText("Render queue cleared.")
-
 
     def setupCustomNodes(self):
         """
@@ -709,4 +684,3 @@ class ComfyStudioComfyHandler:
         """
         wizard = ComfyInstallerWizard(parent=self, settings_manager=self.settingsManager, log_callback=self.appendLog)
         wizard.exec()
-

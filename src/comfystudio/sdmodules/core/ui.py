@@ -600,8 +600,6 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             QApplication.instance().setLayoutDirection(Qt.LeftToRight)
     def updateMenuBarTexts(self):
 
-        print("Updating menubar titles")
-        print("File Menu will be", self.localization.translate("menu_file", default="File"))
         # Update File Menu Title
         self.fileMenu.setTitle(self.localization.translate("menu_file", default="File"))
 
@@ -693,13 +691,20 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                                                             default=f"Project file not found: {filePath}"))
             self.clearRecents()
     def fillDock(self):
-        if self.currentShotIndex is None or self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
-            self.clearDock()
-            return
+        print("fillDock was called")
+        # if self.currentShotIndex is None or self.currentShotIndex >= len(self.shots):
+        #     self.clearDock()
+        #     return
+
         shot = self.shots[self.currentShotIndex]
+
         self.refreshWorkflowsList(shot)
+
         self.refreshParamsList(shot)
+
     def clearDock(self):
+        print("clearDock was called")
+
         self.workflowListWidget.clear()
         while self.workflowParamsLayout.rowCount() > 0:
             self.workflowParamsLayout.removeRow(0)
@@ -713,7 +718,6 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 item = QListWidgetItem(f"{param['name']} ({param['type']}) : {param['value']}")
                 item.setData(Qt.ItemDataRole.UserRole, ("shot", param))
                 self.paramsListWidget.addItem(item)
-
             for wf in shot.workflows:
                 if "params" in wf.parameters:
                     for param in wf.parameters["params"]:
@@ -827,6 +831,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         sys.path.pop(0)
 
     def updateList(self):
+
         previous_selection = self.listWidget.currentRow()
 
         self.listWidget.clear()
@@ -839,8 +844,9 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             self.listWidget.addItem(item)
 
-        if previous_selection is not None and 0 <= previous_selection < self.listWidget.count():
+        if previous_selection is not None:
             self.listWidget.setCurrentRow(previous_selection)
+
     def updateRecentsMenu(self):
         recentsMenu = self.menus['Recents']
         recentsMenu.clear()
@@ -917,7 +923,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 self.fillDock()
             # selected_language = dialog.get_selected_language()
             self.localization.set_language(self.settingsManager.get("language"))
-            self.retranslateUi()
+            # self.retranslateUi()
 
     def openModelManager(self):
         """
@@ -938,8 +944,6 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         state_str = self.settingsManager.get("mainwindow_state", "")
         if state_str:
             self.restoreState(QtCore.QByteArray.fromBase64(state_str.encode("utf-8")))
-
-        print("Restored", )
 
     def saveWindowState(self):
         geometry_b64 = self.saveGeometry().toBase64().data().decode("utf-8")

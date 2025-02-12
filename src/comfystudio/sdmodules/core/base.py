@@ -318,7 +318,6 @@ class ComfyStudioBase:
         from comfystudio.sdmodules.core.param_context_menu import _get_registry
         registry = _get_registry()
 
-        print("Current Registry")
 
         param_type = param.get("type", "string")
         # For string-type parameters include all actions; for others, include only common ones.
