@@ -318,6 +318,42 @@ class ComfyStudioComfyHandler:
         workflow = shot.workflows[workflowIndex]
         isVideo = workflow.isVideo
         currentSignature = self.computeWorkflowSignature(shot, workflowIndex)
+
+        # First, check if an identical version already exists.
+        existing_output = None
+        # Compare the current workflow parameters with each saved version.
+        for version in workflow.versions:
+            # Here we assume that if the saved parameters (snapshot) are equal to the current
+            # workflow.parameters then nothing has changed. You may need to adjust this
+            # comparison if your workflow parameters include extra keys.
+            if version["params"] == workflow.parameters and (
+                    (version["is_video"] and isVideo) or ((not version["is_video"]) and not isVideo)):
+                if os.path.exists(version["output"]):
+                    existing_output = version["output"]
+                    break
+
+        if existing_output:
+            print(f"[DEBUG] Reusing existing rendered output for shot '{shot.name}' in workflow {workflowIndex}.")
+            # Update the shot with the output from the saved version.
+            if isVideo:
+                shot.videoPath = existing_output
+                shot.videoVersions.append(existing_output)
+                shot.currentVideoVersion = len(shot.videoVersions) - 1
+                shot.lastVideoSignature = currentSignature
+            else:
+                shot.stillPath = existing_output
+                shot.imageVersions.append(existing_output)
+                shot.currentImageVersion = len(shot.imageVersions) - 1
+                shot.lastStillSignature = currentSignature
+
+            self.updateList()
+            self.shotRenderComplete.emit(shotIndex, workflowIndex, existing_output, isVideo)
+            if self.render_mode == 'per_shot':
+                self.workflowIndexInProgress += 1
+                self.processNextWorkflow()
+            elif self.render_mode == 'per_workflow':
+                self.startNextRender()
+            return
         alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
         if not alreadyRendered:
             for other_shot_index, other_shot in enumerate(self.shots):
