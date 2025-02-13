@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import tempfile
+import time
 import urllib
 from typing import List
 
@@ -12,7 +13,8 @@ import requests
 from PyQt6.QtCore import QThreadPool
 from qtpy.QtCore import (
     Qt,
-    QThread
+    QThread,
+    Signal
 )
 from qtpy.QtWidgets import (
     QFileDialog,
@@ -34,8 +36,12 @@ class ComfyStudioShotManager:
         self.currentShotIndex: int = -1
 
 class ComfyStudioComfyHandler:
+
+    renderSelectedSignal = Signal()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.renderSelectedSignal.connect(self.onRenderSelected)
         self.renderQueue = []  # We'll store shotIndices to render
         self.activeWorker = None  # The QThread worker checking results
         self.comfy_thread = None
@@ -385,7 +391,6 @@ class ComfyStudioComfyHandler:
                     prevWorkflowIndex = workflowIndex - 1
                 else:
                     prevWorkflowIndex = None
-
             if prevWorkflowIndex is not None:
                 prevWf = shot.workflows[prevWorkflowIndex]
                 # Determine the previous output based on the workflow type
@@ -463,10 +468,10 @@ class ComfyStudioComfyHandler:
         worker.signals.finished.connect(self.onComfyFinished)
 
         # Show final structure in debug before sending
-        print("[DEBUG] Final workflow JSON structure before sending:")
-        for k, v in workflow_json.items():
-            print("       Node ID:", k)
-            print("               ", v)
+        # print("[DEBUG] Final workflow JSON structure before sending:")
+        # for k, v in workflow_json.items():
+        #     print("       Node ID:", k)
+        #     print("               ", v)
 
         # Start
         self.status_widgets["statusMessage"].setText(f"Rendering {shot.name} - Workflow {workflowIndex + 1}/{len(shot.workflows)} ...")
@@ -552,6 +557,15 @@ class ComfyStudioComfyHandler:
                     shot.currentImageVersion = len(shot.imageVersions) - 1
                     shot.lastStillSignature = self.computeRenderSignature(shot, isVideo=False)
 
+                new_version = {
+                    "params": copy.deepcopy(workflow.parameters),  # snapshot of current workflow params
+                    "output": new_full,  # path to the rendered still or video
+                    "is_video": (final_is_video or workflow.isVideo),
+                    "timestamp": time.time()  # optionally, store when this version was created
+                }
+
+                workflow.versions.append(new_version)
+
                 # Mark this workflow's own signature, so we don't re-render if nothing changed
                 workflow.lastSignature = self.computeRenderSignature(shot, isVideo=workflow.isVideo)
 
@@ -588,7 +602,7 @@ class ComfyStudioComfyHandler:
         """
         Worker is done, proceed with the next workflow or shot.
         """
-        self.activeWorker = None
+        # self.activeWorker = None
         self.status_widgets["statusMessage"].setText("Ready")
         # self.workflowIndexInProgress += 1
         # self.processNextWorkflow()

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import copy
 import json
 import logging
 import os
@@ -695,11 +696,8 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         # if self.currentShotIndex is None or self.currentShotIndex >= len(self.shots):
         #     self.clearDock()
         #     return
-
         shot = self.shots[self.currentShotIndex]
-
         self.refreshWorkflowsList(shot)
-
         self.refreshParamsList(shot)
 
     def clearDock(self):
@@ -710,6 +708,67 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.workflowParamsLayout.removeRow(0)
         self.workflowParamsGroup.setEnabled(False)
         self.paramsListWidget.clear()
+
+    def createWorkflowVersionDropdown(self, workflow):
+        """
+        Creates a QComboBox populated with version snapshots for a given workflow.
+        The first entry is a placeholder, and then one entry per version.
+        """
+        combo = QComboBox()
+        combo.addItem("Select version")  # Placeholder item
+
+        # Populate with versions if any exist.
+        for idx, version in enumerate(workflow.get("versions", [])):
+            # You can customize the label, for instance, adding a timestamp.
+            label = f"Version {idx + 1}"
+            combo.addItem(label, version)  # store the version data in userData
+        # Connect the signal to restore the version when selected.
+        combo.currentIndexChanged.connect(
+            lambda idx, wf=workflow, cb=combo: self.onWorkflowVersionChanged(wf, cb)
+        )
+        return combo
+
+    def onWorkflowVersionChanged(self, workflow, combo):
+        idx = combo.currentIndex()
+        if idx <= 0:
+            # First item is a placeholder.
+            return
+
+        # Retrieve the selected version snapshot (stored in userData)
+        version = combo.itemData(idx)
+        if not version:
+            return
+
+        # Update workflow parameters from the version snapshot.
+        workflow.parameters = copy.deepcopy(version["params"])
+
+        # Also update the shot’s output (e.g., stillPath or videoPath) based on the version.
+        shot = self.getShotForWorkflow(workflow)  # implement this helper to return the shot containing 'workflow'
+        if shot:
+            if version.get("is_video"):
+                shot.videoPath = version["output"]
+            else:
+                shot.stillPath = version["output"]
+
+            # Optionally refresh other parts of your UI (parameters, etc.)
+            self.refreshWorkflowsList(shot)
+            self.refreshParamsList(shot)
+
+            # Now determine the workflow’s index and refresh the preview.
+            try:
+                wf_index = shot.workflows.index(workflow)
+            except ValueError:
+                wf_index = 0  # Fallback if not found
+
+            # Call the preview dock refresh function to display the new version.
+            self.fillDock()
+            self.previewDock.showMediaForShotWorkflow(shot, wf_index)
+
+    def getShotForWorkflow(self, workflow: WorkflowAssignment):
+        for shot in self.shots:
+            if workflow in shot.workflows:
+                return shot
+        return None
 
     def refreshParamsList(self, shot: Shot):
         self.paramsListWidget.clear()

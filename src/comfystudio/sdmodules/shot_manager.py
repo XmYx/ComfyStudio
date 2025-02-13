@@ -290,7 +290,7 @@ class ShotManager:
         try:
             with open(filePath, 'w') as f:
                 json.dump(project_data, f, indent=4)
-            self.statusMessage.setText(
+            self.status_widgets["statusMessage"].setText(
                 f"{self.localization.translate('status_saved_to', default='Project saved to')} {filePath}")
             self.addToRecents(filePath)
         except Exception as e:

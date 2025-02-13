@@ -11,6 +11,7 @@ class WorkflowAssignment:
     parameters: Dict[str, Any] = field(default_factory=dict)
     isVideo: bool = False
     lastSignature: str = field(default_factory=str)
+    versions: List[Dict[str, Any]] = field(default_factory=list)  # New field for version snapshots
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -18,7 +19,8 @@ class WorkflowAssignment:
             "enabled": self.enabled,
             "parameters": self.parameters,
             "isVideo": self.isVideo,
-            "lastSignature": self.lastSignature
+            "lastSignature": self.lastSignature,
+            "versions": self.versions  # Include versions when serializing
         }
 
     @classmethod
@@ -28,8 +30,15 @@ class WorkflowAssignment:
             enabled=data.get('enabled', True),
             parameters=data.get('parameters', {}),
             isVideo=data.get('isVideo', False),
-            lastSignature=data.get('lastSignature', "")
+            lastSignature=data.get('lastSignature', ""),
+            versions=data.get('versions', [])  # Load versions if present
         )
+
+    def get(self, name, default=None):
+        if hasattr(self, name):
+            return getattr(self, name)
+        else:
+            return default
 
 @dataclass
 class Shot:

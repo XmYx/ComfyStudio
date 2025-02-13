@@ -231,7 +231,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
 
         self.shotSelected.connect(self.previewDock.onShotSelected)
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
-        # self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
+        self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
         self.shotRenderComplete.connect(self.onRenderComplete)
         self.createWindowsMenu()
 
@@ -282,6 +282,19 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             return result_container[0]
         return None
 
+    def selectShotWithApiParameter(self):
+        # Iterate over the shots to find one with an API flag.
+        for index, shot in enumerate(self.shots):
+            for wf in shot.workflows:
+                for param in wf.parameters.get("params", []):
+                    if param.get("useApiImage") and param.get("dynamicOverrides", {}).get("type") == "api":
+                        # Set this shot as the current shot.
+                        self.currentShotIndex = index
+                        # Update the UI selection.
+                        self.listWidget.setCurrentRow(index)
+                        self.onSelectionChangedSignal.emit()
+                        return True
+        return False
     def process_api_request_async(self, endpoint_config, image_data):
         try:
             import tempfile, os
@@ -292,12 +305,18 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             received_image_path = tmp_file.name
             print(f"[DEBUG] Received API image saved to: {received_image_path}")
 
+            if not self.selectShotWithApiParameter():
+                # Fallback if no shot has the API flag:
+                if self.shots:
+                    self.currentShotIndex = 0
+                    self.onSelectionChangedSignal.emit()
+
             # Ensure a shot is selected. If not, default to the first shot.
             # if self.currentShotIndex < 0 and self.shots:
             #     self.currentShotIndex = 0
-            self.currentShotIndex = 0
-            self.onSelectionChangedSignal.emit()
-            shot = self.shots[0]
+            # self.currentShotIndex = 0
+            # self.onSelectionChangedSignal.emit()
+            shot = self.shots[self.currentShotIndex]
 
             # Update any workflow parameter flagged for API input.
             api_param_found = False
@@ -318,11 +337,11 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             self._api_render_done = False
 
             # Trigger rendering by calling your onRenderSelected function.
-            self.onRenderSelected()
+            self.renderSelectedSignal.emit()
 
             # Poll until rendering is finished (or timeout after, say, 60 seconds).
             start_time = time.time()
-            timeout = 60  # seconds
+            timeout = 240  # seconds
             while not self._api_render_done:
                 # Allow the main event loop to process pending events/signals.
                 QCoreApplication.processEvents()
@@ -347,8 +366,10 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             return None
 
     def onRenderComplete(self, shotIndex, workflowIndex, new_full, isvideo):
+
         self._api_render_done = True
-        self.previewDock.onShotRenderComplete(shotIndex, workflowIndex, new_full, isvideo)
+
+        # self.previewDock.onShotRenderComplete(shotIndex, workflowIndex, new_full, isvideo)
 
 
     # def process_api_request(self, endpoint_config, image_data):
@@ -447,6 +468,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         #     self.addShot()
         # else:
         self.currentShotIndex = idx
+        self.onSelectionChanged()
         self.fillDock()
 
         print("onItemClicked", idx)
@@ -456,7 +478,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         #     self.player.stop()
         # except Exception:
         #     pass
-        # QMetaObject.invokeMethod(self.previewDock, "release_media", Qt.ConnectionType.QueuedConnection)
+        QMetaObject.invokeMethod(self.previewDock, "release_media", Qt.ConnectionType.QueuedConnection)
         selected_items = self.listWidget.selectedItems()
 
         if len(selected_items) == 0:
@@ -505,12 +527,12 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                         self.workflowSelected.emit(idx, last_rendered_workflow_idx)
                     else:
                         self.shotSelected.emit(idx)
-        #     else:
-        #         self.currentShotIndex = 0
-        #         self.clearDock()
-        # else:
-        #     self.currentShotIndex = 0
-        #     self.clearDock()
+            else:
+                self.currentShotIndex = 0
+                self.clearDock()
+        else:
+            self.currentShotIndex = 0
+            self.clearDock()
 
     def onListWidgetContextMenu(self, pos: QPoint):
         selected_items = self.listWidget.selectedItems()

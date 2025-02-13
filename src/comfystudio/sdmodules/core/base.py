@@ -8,9 +8,12 @@ import subprocess
 import tempfile
 from typing import List, Dict
 
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QVBoxLayout
 from qtpy.QtCore import (
     Qt,
-    Slot
+    Slot,
+    Signal
 )
 from qtpy.QtGui import QCursor
 from qtpy.QtWidgets import (
@@ -34,6 +37,69 @@ from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.settings import SettingsManager
 from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
 from comfystudio.sdmodules.videotools import extract_frame
+
+
+class ImagePreviewLineEdit(QWidget):
+    # Re-emit QLineEdit's textChanged signal so it behaves similarly.
+    textChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.line_edit = QLineEdit(self)
+        self.image_label = QLabel(self)
+        # Disable automatic scaling to avoid unwanted stretching.
+        self.image_label.setScaledContents(False)
+        # Align the preview to the right and center vertically.
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # Optionally, set a default maximum height (this will be overridden dynamically).
+        self.image_label.setMaximumHeight(200)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.line_edit)
+        layout.addWidget(self.image_label)
+
+        # Connect QLineEdit signal to our custom handler.
+        self.line_edit.textChanged.connect(self._on_text_changed)
+
+    def _on_text_changed(self, text):
+        # Re-emit the textChanged signal.
+        self.textChanged.emit(text)
+
+        # Try to load an image using the text as a file path.
+        pixmap = QPixmap(text)
+        if not pixmap.isNull():
+            # Calculate the maximum allowed height (4x the QLineEdit's height).
+            max_height = 4 * self.line_edit.height()
+            # Scale the pixmap if its height exceeds the maximum, preserving aspect ratio.
+            if pixmap.height() > max_height:
+                scaled_pixmap = pixmap.scaledToHeight(max_height, Qt.TransformationMode.SmoothTransformation)
+            else:
+                scaled_pixmap = pixmap
+
+            self.image_label.setPixmap(scaled_pixmap)
+            # Ensure the label's size fits the pixmap without stretching.
+            self.image_label.setFixedSize(scaled_pixmap.size())
+            self.image_label.show()
+        else:
+            self.image_label.clear()
+            self.image_label.hide()
+
+    # Expose common QLineEdit methods to remain compatible.
+    def text(self):
+        return self.line_edit.text()
+
+    def setText(self, text):
+        self.line_edit.setText(text)
+
+    def setPlaceholderText(self, text):
+        self.line_edit.setPlaceholderText(text)
+
+    def placeholderText(self):
+        return self.line_edit.placeholderText()
+
+    def selectAll(self):
+        self.line_edit.selectAll()
 
 
 class ComfyStudioBase:
@@ -227,6 +293,9 @@ class ComfyStudioBase:
         # Clear existing rows in the layout
         while self.workflowParamsLayout.rowCount() > 0:
             self.workflowParamsLayout.removeRow(0)
+
+        version_dropdown = self.createWorkflowVersionDropdown(workflow)
+        self.workflowParamsLayout.addWidget(version_dropdown)
 
         params_list = workflow.parameters.get("params", [])
 
@@ -564,7 +633,7 @@ class ComfyStudioBase:
             w.valueChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
         else:
-            w = QLineEdit()
+            w = ImagePreviewLineEdit()
             w.setText(str(pval))
             w.textChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
