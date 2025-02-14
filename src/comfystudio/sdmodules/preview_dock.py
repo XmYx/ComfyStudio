@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import os
+import time
 
+from PyQt6.QtCore import QCoreApplication
 from qtpy.QtGui import QPixmap
 from qtpy.QtWidgets import (
     QWidget,
@@ -15,7 +17,8 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import (
     Qt,
-    QUrl
+    QUrl,
+    Slot
 )
 from qtpy.QtMultimedia import QMediaPlayer, QAudioOutput
 from qtpy.QtMultimediaWidgets import QVideoWidget
@@ -30,7 +33,7 @@ class ShotPreviewDock(QDockWidget):
     def __init__(self, parent=None):
         super().__init__("Shot Preview", parent)
         self.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-
+        self.mainWin = parent
         # Main widget inside the dock
         self.previewContainer = QWidget()
         self.setWidget(self.previewContainer)
@@ -133,33 +136,36 @@ class ShotPreviewDock(QDockWidget):
         self.player.durationChanged.connect(self.onDurationChanged)
         self.rateSpin.valueChanged.connect(self.onRateChanged)
         self.volumeSlider.valueChanged.connect(self.onVolumeChanged)
-
+        self.player.mediaStatusChanged.connect(self.onGlobalMediaStatusChanged)
         self.currentShot = None
         self.currentWorkflowIndex = -1
         self.player.setPlaybackRate(1.0)
 
     def onShotSelected(self, shotIndex):
-        mainWin = self.parent()
-        if not mainWin or shotIndex < 0 or shotIndex >= len(mainWin.shots):
-            self.showNoMedia("(Invalid shot selection.)")
-            self.currentShot = None
-            self.currentWorkflowIndex = -1
-            return
-        shot = mainWin.shots[shotIndex]
-        self.currentShot = shot
-        if len(shot.workflows) > 0:
-            last_wf_index = len(shot.workflows) - 1
-            self.currentWorkflowIndex = last_wf_index
-            self.showMediaForShotWorkflow(shot, last_wf_index)
-        else:
-            if shot.videoPath and os.path.exists(shot.videoPath):
-                self.showVideo(shot.videoPath, f"{shot.name} (no workflows)")
-            elif shot.stillPath and os.path.exists(shot.stillPath):
-                self.showImage(shot.stillPath, f"{shot.name} (no workflows)")
-            else:
-                self.showNoMedia(f"{shot.name}: no workflows or media")
+        print("DEBUG onShotSelected", shotIndex)
+        pass
+        # mainWin = self.parent()
+        # if not mainWin or shotIndex < 0 or shotIndex >= len(mainWin.shots):
+        #     self.showNoMedia("(Invalid shot selection.)")
+        #     self.currentShot = None
+        #     self.currentWorkflowIndex = -1
+        #     return
+        # shot = mainWin.shots[shotIndex]
+        # self.currentShot = shot
+        # if len(shot.workflows) > 0:
+        #     last_wf_index = len(shot.workflows) - 1
+        #     self.currentWorkflowIndex = last_wf_index
+        #     self.showMediaForShotWorkflow(shot, last_wf_index)
+        # else:
+        # if shot.videoPath and os.path.exists(shot.videoPath):
+        #     self.showVideo(shot.videoPath, f"{shot.name} (no workflows)")
+        # elif shot.stillPath and os.path.exists(shot.stillPath):
+        #     self.showImage(shot.stillPath, f"{shot.name} (no workflows)")
+        # else:
+        #     self.showNoMedia(f"{shot.name}: no workflows or media")
 
     def onWorkflowSelected(self, shotIndex, workflowIndex):
+        print("DEBUG onWorkflowSelected", shotIndex, workflowIndex)
         mainWin = self.parent()
         if not mainWin:
             return
@@ -187,6 +193,10 @@ class ShotPreviewDock(QDockWidget):
                 self.showImage(filePath, f"{self.currentShot.name} (WF {workflowIndex+1})")
             else:
                 self.showNoMedia(f"{self.currentShot.name} (Render done, file missing)")
+    # def onShotRenderComplete(self, shotIndex, workflowIndex, filePath, isVideo):
+    #     print("DEBUG onShotRenderComplete", shotIndex, workflowIndex, filePath)
+    #     # Optional: add a small delay to let the file settle:
+    #     self.showMediaForShotWorkflow(self.mainWin.shots[shotIndex], workflowIndex)
 
     def showMediaForShotWorkflow(self, shot, wfIndex):
         if wfIndex < 0 or wfIndex >= len(shot.workflows):
@@ -194,14 +204,22 @@ class ShotPreviewDock(QDockWidget):
             return
         wfa = shot.workflows[wfIndex]
         if wfa.isVideo:
+            print("Trying to show video")
             if shot.videoPath and os.path.exists(shot.videoPath):
+                print("Because", shot.videoPath)
                 self.showVideo(shot.videoPath, f"{shot.name} (WF {wfIndex+1})")
             else:
+                print("But", f"{shot.name} (WF {wfIndex+1}, no video path)")
+
                 self.showNoMedia(f"{shot.name} (WF {wfIndex+1}, no video path)")
         else:
+            print("Trying to show image")
             if shot.stillPath and os.path.exists(shot.stillPath):
+                print("Because", shot.stillPath)
                 self.showImage(shot.stillPath, f"{shot.name} (WF {wfIndex+1})")
             else:
+                print("But", f"{shot.name} (WF {wfIndex+1}, no image)")
+
                 self.showNoMedia(f"{shot.name} (WF {wfIndex+1}, no image)")
 
     def showImage(self, path, infoText="(Image)"):
@@ -226,12 +244,34 @@ class ShotPreviewDock(QDockWidget):
         self.updateScaledImage()
 
     def showVideo(self, path, infoText="(Video)"):
+
         self.player.stop()
-        self.imageLabel.hide()
-        self.videoWidget.show()
+        # self.player.setSource(QUrl())
+        if self.imageLabel.isVisible():
+            self.imageLabel.hide()
+        if not self.videoWidget.isVisible():
+            self.videoWidget.show()
         self.infoLabel.setText(infoText)
         self.timelineSlider.setValue(0)
+        self.player.mediaStatusChanged.connect(self.onMediaLoaded)
         self.player.setSource(QUrl.fromLocalFile(path))
+
+    def onMediaLoaded(self, status):
+        # Handle the loaded media status to display the first frame
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self.player.setPosition(0)
+            print(self.player.playbackState())
+            if self.player.playbackState() != QMediaPlayer.PlaybackState.PausedState:
+                self.player.pause()  # Pause so that the first frame appears as an image
+            # Disconnect this one-time slot
+            self.player.mediaStatusChanged.disconnect(self.onMediaLoaded)
+
+    def onGlobalMediaStatusChanged(self, status):
+        # When playback reaches the end, reset to first frame and pause.
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self.player.playbackState() != QMediaPlayer.PlaybackState.PausedState:
+                self.player.pause()  # Pause so that the first frame appears as an image
+            self.player.setPosition(0)
 
     def showNoMedia(self, infoText="(No media)"):
         self.player.stop()
@@ -297,51 +337,22 @@ class ShotPreviewDock(QDockWidget):
         if self.imageLabel.isVisible():
             self.updateScaledImage()
 
+    @Slot()
     def release_media(self):
-        """
-        Safely pause and release any media that might be playing or loading.
-        This method stops the media player, releases media resources, hides media widgets,
-        and resets UI elements to their default state.
-        """
         try:
-            # Stop the media player if it's playing
             self.player.stop()
-
-            # Release the media source
             self.player.setSource(QUrl())
-
-            # Optionally reset playback rate and volume if desired
             self.player.setPlaybackRate(1.0)
-            self.audioOutput.setVolume(0.8)  # Reset to default or desired value
-
-            # Hide both video and image widgets
+            self.audioOutput.setVolume(0.8)
             self.videoWidget.hide()
             self.imageLabel.hide()
-
-            # Clear the stored pixmap
             self.fullPixmap = None
-            self.imageLabel.setPixmap(QPixmap())  # Remove any displayed image
-
-            # Reset the timeline slider
+            self.imageLabel.setPixmap(QPixmap())
             self.timelineSlider.setValue(0)
             self.timelineSlider.setRange(0, 0)
-
-            # Update the info label to indicate no media is loaded
             self.infoLabel.setText("(No media)")
-
-            # Reset other UI elements if necessary
-            # For example, disable controls that are not relevant without media
-            # self.playBtn.setEnabled(False)
-            # self.pauseBtn.setEnabled(False)
-            # self.stopBtn.setEnabled(False)
-            # self.timelineSlider.setEnabled(False)
-            # self.volumeSlider.setEnabled(False)
-            # self.rateSpin.setEnabled(False)
-
-            # Optionally reset other states
             self.currentShot = None
             self.currentWorkflowIndex = -1
-
+            print("Released media")
         except Exception as e:
-            # Log the exception or handle it as needed
             print(f"Error releasing media: {e}")
