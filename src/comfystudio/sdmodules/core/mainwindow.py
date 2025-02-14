@@ -29,11 +29,9 @@ from comfystudio.sdmodules.contextmenuhelper import create_context_menu
 from comfystudio.sdmodules.core.comfyhandler import ComfyStudioShotManager, ComfyStudioComfyHandler
 from comfystudio.sdmodules.core.ui import ComfyStudioUI
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
-# from comfystudio.sdmodules.mainwindow_ui import ComfyStudioComfyHandler
 from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.shot_manager import ShotManager
-# from comfystudio.sdmodules.widgets import ReorderableListWidget
 
 
 

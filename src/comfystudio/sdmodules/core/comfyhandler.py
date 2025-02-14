@@ -199,26 +199,26 @@ class ComfyStudioComfyHandler:
         If multiple shots are present, prompt the user to choose between 'Per Shot' or 'Per Workflow' rendering.
         """
         if not self.shots:
-            QMessageBox.warning(self, "Warning", "No shots available to render.")
+            # QMessageBox.warning(self, "Warning", "No shots available to render.")
             return
 
-        if len(self.shots) > 1:
-            # Prompt the user to choose render mode
-            render_mode, ok = QInputDialog.getItem(
-                self,
-                "Select Render Mode",
-                "Choose how to queue the render tasks:",
-                ["Per Shot", "Per Workflow"],
-                0,
-                False
-            )
-            if not ok:
-                return
-            chosen_mode = 'per_shot' if render_mode == "Per Shot" else 'per_workflow'
-        else:
-            # Default to 'Per Shot' if only one shot exists
-            chosen_mode = 'per_shot'
-
+        # if len(self.shots) > 1:
+        #     # Prompt the user to choose render mode
+        #     render_mode, ok = QInputDialog.getItem(
+        #         self,
+        #         "Select Render Mode",
+        #         "Choose how to queue the render tasks:",
+        #         ["Per Shot", "Per Workflow"],
+        #         0,
+        #         False
+        #     )
+        #     if not ok:
+        #         return
+        #     chosen_mode = 'per_shot' if render_mode == "Per Shot" else 'per_workflow'
+        # else:
+        #     # Default to 'Per Shot' if only one shot exists
+        #     chosen_mode = 'per_shot'
+        chosen_mode = 'per_workflow'
         # First stop any current rendering processes
         self.stopRendering()
 
@@ -234,7 +234,7 @@ class ComfyStudioComfyHandler:
                     if wf_idx < len(shot.workflows) and shot.workflows[wf_idx].enabled:
                         self.renderQueue.append((shot_idx, wf_idx))
         else:
-            QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
+            # QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
             return
 
         # Start rendering if not already in progress
@@ -346,8 +346,8 @@ class ComfyStudioComfyHandler:
                 shot.currentImageVersion = len(shot.imageVersions) - 1
                 shot.lastStillSignature = currentSignature
 
-            self.updateList()
-            self.shotRenderComplete.emit(shotIndex, workflowIndex, existing_output, isVideo)
+            # self.updateList()
+            # self.shotRenderComplete.emit(shotIndex, workflowIndex, existing_output, isVideo)
             if self.render_mode == 'per_shot':
                 self.workflowIndexInProgress += 1
                 self.processNextWorkflow()
@@ -372,8 +372,8 @@ class ComfyStudioComfyHandler:
                             shot.currentVideoVersion = len(shot.videoVersions) - 1
                             shot.lastVideoSignature = other_shot.lastVideoSignature
                             workflow.lastSignature = currentSignature
-                            self.updateList()
-                            self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.videoPath, True)
+                            # self.updateList()
+                            # self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.videoPath, True)
                         elif not isVideo and other_shot.stillPath and os.path.exists(other_shot.stillPath):
                             print(f"[DEBUG] Reusing image from shot '{other_shot.name}' for current shot '{shot.name}'.")
                             shot.stillPath = other_shot.stillPath
@@ -381,8 +381,8 @@ class ComfyStudioComfyHandler:
                             shot.currentImageVersion = len(shot.imageVersions) - 1
                             shot.lastStillSignature = other_shot.lastStillSignature
                             workflow.lastSignature = currentSignature
-                            self.updateList()
-                            self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.stillPath, False)
+                            # self.updateList()
+                            # self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.stillPath, False)
 
         alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
         if workflow.lastSignature == currentSignature and alreadyRendered and os.path.exists(alreadyRendered):

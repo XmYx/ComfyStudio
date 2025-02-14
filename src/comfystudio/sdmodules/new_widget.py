@@ -1406,12 +1406,18 @@ class ShotListView(QListWidget):
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
         self.setViewMode(QListWidget.ViewMode.IconMode)
-        self.setIconSize(QSize(160, 120))
+        # Default icon size and zoom factor.
+        self.zoomFactor = 1.0
+        self.baseIconSize = QSize(160, 120)
+        self.setIconSize(QSize(int(self.baseIconSize.width() * self.zoomFactor),
+                               int(self.baseIconSize.height() * self.zoomFactor)))
         self.setSpacing(10)
         self.setDragEnabled(True)
         self.setAcceptDrops(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setMouseTracking(True)
+        # Enable automatic sorting.
+        self.setSortingEnabled(True)
         self.hoverFraction = {}
         self.currentHoverItem = None
         self.inMarkers = {}
@@ -1419,24 +1425,26 @@ class ShotListView(QListWidget):
         self.main_window = main_window
         print("[DEBUG] ShotListView initialized")
 
-    def mimeData(self, items):
-        mimeData = QtCore.QMimeData()
-        shots = []
-        for item in items:
-            shot_idx = item.data(Qt.ItemDataRole.UserRole)
-            shot = QtWidgets.QApplication.activeWindow().shots[shot_idx]
-            shots.append({
-                "name": shot.name,
-                "duration": shot.duration,
-                "videoPath": shot.videoPath,
-                "stillPath": shot.stillPath,
-                "thumbnail_path": shot.thumbnail_path,
-                "inPoint": shot.inPoint,
-                "outPoint": shot.outPoint,
-                "linkedAudio": shot.linkedAudio,
-            })
-        mimeData.setData("application/x-shot", json.dumps(shots).encode("utf-8"))
-        return mimeData
+    def resizeEvent(self, event):
+        # Call the parent resizeEvent and force a redraw.
+        self.update()
+        self.doItemsLayout()
+        super().resizeEvent(event)
+
+
+    def wheelEvent(self, event):
+        # Use Ctrl+wheel to zoom (adjust the icon size and refresh the view)
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y() / 120  # one notch = 1.0 increment (or decrement)
+            self.zoomFactor *= (1 + 0.1 * delta)
+            # Clamp the zoom factor between 0.5 and 3.0 (for example)
+            self.zoomFactor = max(0.25, min(self.zoomFactor, 10.0))
+            new_size = QSize(int(self.baseIconSize.width() * self.zoomFactor),
+                             int(self.baseIconSize.height() * self.zoomFactor))
+            self.setIconSize(new_size)
+            self.update()
+        else:
+            super().wheelEvent(event)
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -1487,6 +1495,7 @@ class ShotListView(QListWidget):
                 frac = self.hoverFraction[item_id]
                 shot_idx = item.data(Qt.ItemDataRole.UserRole)
                 shot = self.main_window.shots[shot_idx]
+                # Use the current icon size (which changes with zoom) for the preview.
                 frame_pix = getVideoFrame(shot.videoPath, frac, self.iconSize())
                 iconSize = self.iconSize()
                 icon_x = rect.x() + (rect.width() - iconSize.width()) // 2
@@ -1511,7 +1520,6 @@ class ShotListView(QListWidget):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(x - 3, rect.y() + 5, 6, 6)
         painter.end()
-
 
 ########################################################################
 # TimelineNavigator
@@ -2329,6 +2337,7 @@ class ShotManagerWidget:
         main_window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.previewDock)
         print("[DEBUG] Registered Preview dock.")
         self.toolbar = QtWidgets.QToolBar("Timeline Tools", main_window)
+        self.toolbar.setObjectName("timeline_tools")
         main_window.addToolBar(self.toolbar)
         self.selectAction = QtGui.QAction("Select", self.toolbar)
         self.bladeAction = QtGui.QAction("Blade", self.toolbar)
