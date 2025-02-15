@@ -572,13 +572,24 @@ class ComfyStudioComfyHandler:
             local_path = self.downloadComfyFile(final_path)
             if local_path:
                 ext = os.path.splitext(local_path)[1]
-                new_name = f"{'video' if final_is_video or workflow.isVideo else 'image'}_{random.randint(0, 999999)}{ext}"
-                new_full = os.path.join(project_folder, new_name)
+                # Choose subfolder based on media type.
+                if final_is_video or workflow.isVideo:
+                    subfolder = os.path.join(project_folder, "videos")
+                else:
+                    subfolder = os.path.join(project_folder, "stills")
+                if not os.path.exists(subfolder):
+                    os.makedirs(subfolder, exist_ok=True)
+                # Sanitize the shot name and build a filename in the format:
+                # shot_workflow_version_timestamp.ext
+                shot_name = shot.name.replace(" ", "_")
+                version_number = len(workflow.versions) + 1  # 1-indexed version
+                timestamp = int(time.time())
+                new_name = f"{shot_name}_{workflowIndex}_{version_number}_{timestamp}{ext}"
+                new_full = os.path.join(subfolder, new_name)
                 try:
                     with open(local_path, "rb") as src, open(new_full, "wb") as dst:
                         dst.write(src.read())
                 except Exception:
-                    # Fallback if copy failed
                     new_full = local_path
 
                 # --- IMPORTANT: Update the Shot with the new file path *now*, so the next workflow can see it ---
