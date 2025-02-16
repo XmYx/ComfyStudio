@@ -40,7 +40,7 @@ class WorkflowAssignment:
         else:
             return default
 
-@dataclass
+@dataclass(eq=False)
 class Shot:
     name: str = "Unnamed Shot"
     videoPath: str = ""
@@ -55,6 +55,7 @@ class Shot:
     params: List[Dict[str, Any]] = field(default_factory=list)
     # Remove the raw "duration" field from the initializer.
     # Instead, we use a default fallback duration (in seconds) if video cannot be read.
+    duration: int = 5
     default_duration: int = 5
     inPoint: float = 0.0  # fraction (0.0-1.0) for trimmed start
     outPoint: float = 1.0  # fraction (0.0-1.0) for trimmed end

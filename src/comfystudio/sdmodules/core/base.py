@@ -507,7 +507,6 @@ class ComfyStudioBase:
     #     if currentItem:
     #         self.onWorkflowItemClicked(currentItem)
 
-
     def setParamValueInShots(self, param: dict, onlySelected: bool, item):
         """
         Copies this param's current value to the same-named parameter in either:
@@ -515,10 +514,11 @@ class ComfyStudioBase:
           - all shots
 
         If 'param' is a shot param, it matches shot params.
-        If 'param' is a workflow param, it matches workflow params with the same name and workflow path.
+        If 'param' is a workflow param, it matches workflow params with the same name, workflow path,
+        and matching nodeIDs.
 
         Args:
-            param (dict): The parameter dictionary containing at least 'name', 'value', and optionally 'workflow_path'.
+            param (dict): The parameter dictionary containing at least 'name', 'value', and optionally 'nodeIDs'.
             onlySelected (bool): If True, apply changes only to selected shots; otherwise, apply to all shots.
         """
         # 1) Determine if it's a shot-level or workflow-level param
@@ -567,7 +567,8 @@ class ComfyStudioBase:
                 # For workflow-level param, update only in the specified workflow
                 if not workflow_path:
                     logging.warning(
-                        f"Workflow path not provided for parameter '{param_name}'. Skipping shot index {sidx}.")
+                        f"Workflow path not provided for parameter '{param_name}'. Skipping shot index {sidx}."
+                    )
                     continue  # Cannot determine which workflow to update without the path
 
                 # Find the workflow with the matching path
@@ -580,7 +581,9 @@ class ComfyStudioBase:
                     if "params" not in wf.parameters:
                         continue
                     for p in wf.parameters["params"]:
-                        if p["name"] == param_name:
+                        # Only update if both the parameter name and nodeIDs match
+                        if (p["name"] == param_name and
+                                p.get("nodeIDs", []) == param.get("nodeIDs", [])):
                             p["value"] = new_value
                     # Save changes and refresh the workflow's parameter list in the UI
                     self.saveCurrentWorkflowParamsForShot(wf)
