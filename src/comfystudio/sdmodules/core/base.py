@@ -189,6 +189,33 @@ class ComfyStudioBase:
             return
         self.addWorkflowToShot(path, isVideo=True)
 
+    def loadWorkflowJson(self, workflow=None, path="") -> dict:
+        """
+        Loads a workflow JSON from file.
+        If an "api_prompt" key exists at the root and its value is a dict, returns its value.
+        Otherwise, returns the full JSON as a dict.
+        Always returns a dict.
+        """
+        try:
+            if workflow:
+                path = workflow.path
+            with open(path, "r") as f:
+                data = json.load(f)
+            # Ensure the loaded data is a dict.
+            if not isinstance(data, dict):
+                logging.error(f"Loaded JSON is not a dict: {data}")
+                return {}
+            if "api_prompt" in data:
+                logging.info("Detected API formatted workflow JSON; using 'api_prompt' section.")
+                api_data = data["api_prompt"]
+                if not isinstance(api_data, dict):
+                    logging.error("The 'api_prompt' section is not a dict. Returning empty dict.")
+                    return {}
+                return api_data
+            return data
+        except Exception as e:
+            logging.error(f"Error loading workflow JSON: {e}")
+            return {}
     def addWorkflowToShot(self, workflow_path, isVideo=False):
         """
         Adds a new workflow to the currently selected shot, loading any default
@@ -202,9 +229,9 @@ class ComfyStudioBase:
 
         try:
             # Load the workflow JSON
-            with open(workflow_path, "r") as f:
-                workflow_json = json.load(f)
-
+            # with open(workflow_path, "r") as f:
+            #     workflow_json = json.load(f)
+            workflow_json = self.loadWorkflowJson(path=workflow_path)
             # Create a list of params to expose
             params_to_expose = []
             for node_id, node_data in workflow_json.items():
@@ -296,7 +323,6 @@ class ComfyStudioBase:
 
         version_dropdown = self.createWorkflowVersionDropdown(workflow)
         self.workflowParamsLayout.addWidget(version_dropdown)
-
         params_list = workflow.parameters.get("params", [])
 
         # 1) Group by node_id (or use nodeMetaTitle as key if you prefer).
@@ -640,10 +666,28 @@ class ComfyStudioBase:
             w.setText(str(pval))
             w.textChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
-    def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: Dict, newVal):
+    # def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: Dict, newVal):
+    #     param["value"] = newVal
+    #     self.saveCurrentWorkflowParams()
+
+    @Slot()
+    def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: dict, newVal):
+        # Update the parameter value in the live settings.
         param["value"] = newVal
+
+        # If a version dropdown was previously used, reset it so that live parameters are now in effect.
+        if hasattr(workflow, "version_dropdown"):
+            workflow.version_dropdown.blockSignals(True)
+            workflow.version_dropdown.setCurrentIndex(0)  # Reset to placeholder "Select version"
+            workflow.version_dropdown.blockSignals(False)
+
+        # Save the updated parameters.
         self.saveCurrentWorkflowParams()
 
+        # Refresh the parameter list so the UI reflects the new live values.
+        shot = self.getShotForWorkflow(workflow)
+        if shot:
+            self.refreshParamsList(shot)
 
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)
