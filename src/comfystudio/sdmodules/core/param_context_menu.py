@@ -1,4 +1,7 @@
-from PyQt6.QtWidgets import QApplication, QMessageBox
+import copy
+
+from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
+
 
 # Default actions.
 def set_prev_image(window, param):
@@ -25,6 +28,75 @@ def clear_dyn_override(window, param):
     param.pop("usePrevResultImage", None)
     param.pop("usePrevResultVideo", None)
     QMessageBox.information(window, "Info", "Dynamic override cleared.")
+
+def import_files_for_param(window, param):
+    """
+    Opens a file dialog to import files. If multiple files (or multiple lines in a text file)
+    are imported, the callback ensures that there are enough shots (cloning the last shot if needed)
+    and then updates each shot’s workflow-level parameter (identified by the same name) with the
+    imported value. This uses the currently selected workflow item from the workflow list.
+    """
+    file_filter = "Images (*.png *.jpg *.bmp);;Videos (*.mp4 *.avi);;Text Files (*.txt)"
+    files, _ = QFileDialog.getOpenFileNames(window, "Import Files", "", file_filter)
+    if not files:
+        return
+
+    # Determine if we're importing text (multiple lines) or media files.
+    ext = files[0].split('.')[-1].lower()
+    if ext == "txt":
+        try:
+            with open(files[0], "r", encoding="utf-8") as f:
+                imported_values = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            QMessageBox.critical(window, "Error", f"Failed to read text file:\n{e}")
+            return
+    else:
+        imported_values = files
+
+    # Determine if this parameter is a workflow-level parameter.
+    # (Workflow params typically include "nodeIDs".)
+    is_workflow_param = "nodeIDs" in param
+
+    # For workflow-level parameters, we need a workflow list item.
+    workflow_item = None
+    if is_workflow_param:
+        workflow_item = window.workflowListWidget.currentItem()
+        if not workflow_item:
+            QMessageBox.warning(window, "Error", "No workflow selected.")
+            return
+
+    # If there are more imported values than shots, clone the last shot enough times.
+    num_imported = len(imported_values)
+    current_num_shots = len(window.shots)
+    if num_imported > current_num_shots:
+        num_to_create = num_imported - current_num_shots
+        last_shot = window.shots[-1]
+        for i in range(num_to_create):
+            # Clone the last shot.
+            new_shot = copy.deepcopy(last_shot)
+            new_shot.name = f"{last_shot.name} - Extra {i+1}"
+            # Optionally, reset output paths and versions.
+            new_shot.stillPath = ""
+            new_shot.videoPath = ""
+            new_shot.imageVersions = []
+            new_shot.videoVersions = []
+            new_shot.currentImageVersion = -1
+            new_shot.currentVideoVersion = -1
+            window.shots.append(new_shot)
+        # Update the shots list UI.
+        window.updateList()
+
+    # Now iterate through the imported values and update each corresponding shot.
+    # (We assume that each shot has the same workflow that should be updated.)
+    for idx, imported_value in enumerate(imported_values):
+        new_param = param.copy()
+        new_param["value"] = imported_value
+        # Here, we use the workflow_item (from the workflow list widget) so that
+        # setParamValueInShots can retrieve the workflow assignment via data().
+        window.setParamValueInShots(new_param, onlySelected=False, item=workflow_item)
+
+    QMessageBox.information(window, "Info", "Imported values have been assigned to shots.")
+
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QMenu, QDialog
 from PyQt6.QtGui import QCursor
@@ -126,6 +198,11 @@ def _get_registry():
             {
                 "text": "Edit as Dynamic Parameter",
                 "callback": edit_dynamic_param,
+                "param_types": ["string", "other"]
+            },
+            {
+                "text": "Import Files for Parameter",
+                "callback": import_files_for_param,
                 "param_types": ["string", "other"]
             }
         ]

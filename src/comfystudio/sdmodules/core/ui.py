@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QPixmap, QIcon
 from qtpy import QtCore
 from qtpy.QtCore import (
@@ -728,42 +728,75 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         )
         return combo
 
+    # def onWorkflowVersionChanged(self, workflow, combo):
+    #     idx = combo.currentIndex()
+    #     if idx <= 0:
+    #         # First item is a placeholder.
+    #         return
+    #
+    #     # Retrieve the selected version snapshot (stored in userData)
+    #     version = combo.itemData(idx)
+    #     if not version:
+    #         return
+    #
+    #     # Update workflow parameters from the version snapshot.
+    #     workflow.parameters = copy.deepcopy(version["params"])
+    #
+    #     # Also update the shot’s output (e.g., stillPath or videoPath) based on the version.
+    #     shot = self.getShotForWorkflow(workflow)  # implement this helper to return the shot containing 'workflow'
+    #     if shot:
+    #         if version.get("is_video"):
+    #             shot.videoPath = version["output"]
+    #         else:
+    #             shot.stillPath = version["output"]
+    #
+    #         # Optionally refresh other parts of your UI (parameters, etc.)
+    #         self.refreshWorkflowsList(shot)
+    #         self.refreshParamsList(shot)
+    #
+    #         # Now determine the workflow’s index and refresh the preview.
+    #         try:
+    #             wf_index = shot.workflows.index(workflow)
+    #         except ValueError:
+    #             wf_index = 0  # Fallback if not found
+    #
+    #         # Call the preview dock refresh function to display the new version.
+    #         self.fillDock()
+    #         self.previewDock.showMediaForShotWorkflow(shot, wf_index)
     def onWorkflowVersionChanged(self, workflow, combo):
         idx = combo.currentIndex()
+        # Store the current selection
+        workflow.selected_version_index = idx
         if idx <= 0:
-            # First item is a placeholder.
             return
 
-        # Retrieve the selected version snapshot (stored in userData)
         version = combo.itemData(idx)
         if not version:
             return
 
-        # Update workflow parameters from the version snapshot.
-        workflow.parameters = copy.deepcopy(version["params"])
+        workflow.parameters = version.get("params", {})
 
-        # Also update the shot’s output (e.g., stillPath or videoPath) based on the version.
-        shot = self.getShotForWorkflow(workflow)  # implement this helper to return the shot containing 'workflow'
+        shot = self.getShotForWorkflow(workflow)
         if shot:
             if version.get("is_video"):
-                shot.videoPath = version["output"]
+                shot.videoPath = version.get("output", "")
             else:
-                shot.stillPath = version["output"]
-
-            # Optionally refresh other parts of your UI (parameters, etc.)
+                shot.stillPath = version.get("output", "")
             self.refreshWorkflowsList(shot)
             self.refreshParamsList(shot)
-
-            # Now determine the workflow’s index and refresh the preview.
             try:
                 wf_index = shot.workflows.index(workflow)
             except ValueError:
-                wf_index = 0  # Fallback if not found
-
-            # Call the preview dock refresh function to display the new version.
+                wf_index = 0
             self.fillDock()
             self.previewDock.showMediaForShotWorkflow(shot, wf_index)
 
+        # Schedule asynchronous update of the UI without rebuilding the dropdown unnecessarily.
+        current_item = self.workflowListWidget.currentItem()
+        if current_item:
+            QTimer.singleShot(0, lambda: self.onWorkflowItemClicked(current_item))
+
+        workflow.version_dropdown = combo
     def getShotForWorkflow(self, workflow: WorkflowAssignment):
         for shot in self.shots:
             if workflow in shot.workflows:
