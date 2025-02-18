@@ -7,6 +7,7 @@ import sys
 
 from PyQt6.QtCore import QUrl, QTimer
 from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtWidgets import QSpinBox
 from qtpy import QtCore
 from qtpy.QtCore import (
     Qt,
@@ -43,7 +44,7 @@ from qtpy.QtWidgets import (
 
 from comfystudio.sdmodules.aboutdialog import AboutDialog
 from comfystudio.sdmodules.core.base import ComfyStudioBase
-from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
+from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment, ensure_parameters_dict
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.model_manager import ModelManagerWindow
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
@@ -517,6 +518,22 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         self.workflowParamsScroll.setWidgetResizable(True)
         self.workflowParamsScroll.setWidget(self.workflowParamsGroup)
 
+        # Add "Current Frame" spin box at the top.
+        self.currentFrameSpin = QSpinBox()
+        self.currentFrameSpin.setMinimum(0)
+        self.currentFrameSpin.setValue(0)
+        self.currentFrameSpin.setToolTip("Select the current frame to view/edit its parameters")
+        self.currentFrameSpin.valueChanged.connect(self.onCurrentFrameChanged)
+        self.workflowParamsLayout.addRow("Current Frame:", self.currentFrameSpin)
+
+        # Add "Run Count" spin box
+        self.runCountSpin = QSpinBox()
+        self.runCountSpin.setMinimum(1)
+        self.runCountSpin.setValue(1)
+        self.runCountSpin.setToolTip("Set the number of runs (frames) for this workflow")
+        self.runCountSpin.valueChanged.connect(self.onRunCountChanged)
+        self.workflowParamsLayout.addRow("Run Count:", self.runCountSpin)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(20)
         splitter.addWidget(self.workflowGroupBox)
@@ -533,6 +550,70 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         splitter.setStretchFactor(1, 4)
         layout.addWidget(splitter)
 
+    def onCurrentFrameChanged(self, frame_index):
+        """
+        When the user changes the current frame using the spin box,
+        load the parameters for that frame (if available) into the parameters dock.
+        """
+        current_item = self.workflowListWidget.currentItem()
+        if not current_item:
+            return
+        workflow = current_item.data(Qt.ItemDataRole.UserRole)
+        if hasattr(workflow, "frame_params") and frame_index in workflow.frame_params:
+            frame_params = workflow.frame_params[frame_index]
+            self.refreshWorkflowParamsForFrame(workflow, frame_params)
+        else:
+            # Optionally clear or leave parameters unchanged.
+            pass
+
+    def refreshWorkflowParamsForFrame(self, workflow, frame_params):
+        """
+        Re-populate the workflow parameters dock widget with the parameters for the given frame.
+        This function clears all parameter rows (except the fixed "Current Frame" and "Run Count" controls)
+        and then re-adds rows for each parameter defined in frame_params["params"].
+
+        Args:
+            workflow: The WorkflowAssignment object.
+            frame_params: A dictionary containing the parameter snapshot for the current frame,
+                          expected to have a key "params" with a list of parameter dicts.
+        """
+        # Preserve the fixed controls at the top (assumed to be present)
+        fixed_widgets = []
+        # Assuming the first two rows are "Current Frame" and "Run Count"
+        row_count = self.workflowParamsLayout.rowCount()
+        # Save the first two rows so we can re-add them after clearing.
+        if row_count >= 2:
+            # Retrieve the labels and widgets from the first two rows
+            fixed_widgets.append(self.workflowParamsLayout.itemAt(0, self.workflowParamsLayout.LabelRole).widget())
+            fixed_widgets.append(self.workflowParamsLayout.itemAt(0, self.workflowParamsLayout.FieldRole).widget())
+            fixed_widgets.append(self.workflowParamsLayout.itemAt(1, self.workflowParamsLayout.LabelRole).widget())
+            fixed_widgets.append(self.workflowParamsLayout.itemAt(1, self.workflowParamsLayout.FieldRole).widget())
+
+        # Clear the layout entirely.
+        while self.workflowParamsLayout.rowCount() > 0:
+            self.workflowParamsLayout.removeRow(0)
+
+        # Re-add the fixed controls.
+        if fixed_widgets:
+            self.workflowParamsLayout.addRow("Current Frame:", fixed_widgets[1])
+            self.workflowParamsLayout.addRow("Run Count:", fixed_widgets[3])
+
+        # Now add each parameter for the current frame.
+        params_list = frame_params.get("params", [])
+        for param in params_list:
+            display_name = param.get("displayName", param.get("name", ""))
+            # createBasicParamWidget is assumed to be a helper that returns a QWidget for the parameter.
+            param_widget = self.createBasicParamWidget(param)
+            self.workflowParamsLayout.addRow(display_name, param_widget)
+    def onRunCountChanged(self, value):
+        """
+        Update the workflow's 'run_count' parameter when the user changes the run count.
+        """
+        current_item = self.workflowListWidget.currentItem()
+        if not current_item:
+            return
+        workflow = current_item.data(Qt.ItemDataRole.UserRole)
+        workflow.parameters["run_count"] = value
     def initParamsTab(self):
         self.paramsScroll = QScrollArea()
         self.paramsScroll.setWidgetResizable(True)
@@ -696,6 +777,8 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         # if self.currentShotIndex is None or self.currentShotIndex >= len(self.shots):
         #     self.clearDock()
         #     return
+
+
         shot = self.shots[self.currentShotIndex]
         self.refreshWorkflowsList(shot)
         self.refreshParamsList(shot)
@@ -710,19 +793,17 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         self.paramsListWidget.clear()
 
     def createWorkflowVersionDropdown(self, workflow):
-        """
-        Creates a QComboBox populated with version snapshots for a given workflow.
-        The first entry is a placeholder, and then one entry per version.
-        """
         combo = QComboBox()
         combo.addItem("Select version")  # Placeholder item
-
         # Populate with versions if any exist.
         for idx, version in enumerate(workflow.get("versions", [])):
-            # You can customize the label, for instance, adding a timestamp.
             label = f"Version {idx + 1}"
-            combo.addItem(label, version)  # store the version data in userData
-        # Connect the signal to restore the version when selected.
+            combo.addItem(label, version)
+        # If the workflow has a stored selection, restore it.
+        if hasattr(workflow, "selected_version_index"):
+            combo.setCurrentIndex(workflow.selected_version_index)
+        else:
+            combo.setCurrentIndex(0)
         combo.currentIndexChanged.connect(
             lambda idx, wf=workflow, cb=combo: self.onWorkflowVersionChanged(wf, cb)
         )
@@ -797,6 +878,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             QTimer.singleShot(0, lambda: self.onWorkflowItemClicked(current_item))
 
         workflow.version_dropdown = combo
+
     def getShotForWorkflow(self, workflow: WorkflowAssignment):
         for shot in self.shots:
             if workflow in shot.workflows:
@@ -830,20 +912,51 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 rowLayout = QHBoxLayout(rowWidget)
                 rowLayout.setContentsMargins(0, 0, 0, 0)
 
+                # 1. Enabled checkbox
                 enableCheck = QCheckBox("Enabled")
                 enableCheck.setChecked(workflow.enabled)
                 enableCheck.setProperty("workflow", workflow)
                 enableCheck.stateChanged.connect(self.onWorkflowEnabledChanged)
                 rowLayout.addWidget(enableCheck)
 
+                # 2. Workflow label (basename of the workflow file)
                 label = QLabel(os.path.basename(workflow.path))
                 rowLayout.addWidget(label)
 
+                # 3. Run Count spin box
+                runCountSpin = QSpinBox()
+                runCountSpin.setMinimum(1)
+                # Use the existing run count if present; default to 1 otherwise.
+                run_count = int(workflow.parameters.get("run_count", 1))
+                runCountSpin.setValue(run_count)
+                runCountSpin.setToolTip("Set the number of runs (frames) for this workflow")
+                # Update the workflow's parameters when changed.
+                runCountSpin.valueChanged.connect(
+                    lambda value, wf=workflow: wf.parameters.__setitem__("run_count", value)
+                )
+                rowLayout.addWidget(QLabel("Runs:"))
+                rowLayout.addWidget(runCountSpin)
+
+                # 4. Current Frame spin box
+                currentFrameSpin = QSpinBox()
+                currentFrameSpin.setMinimum(0)
+                # Use an attribute 'current_frame' if available; default to 0.
+                current_frame = getattr(workflow, "current_frame", 0)
+                currentFrameSpin.setValue(current_frame)
+                currentFrameSpin.setToolTip("Select the current frame for this workflow")
+                currentFrameSpin.valueChanged.connect(
+                    lambda value, wf=workflow: setattr(wf, "current_frame", value)
+                )
+                rowLayout.addWidget(QLabel("Frame:"))
+                rowLayout.addWidget(currentFrameSpin)
+
+                # 5. Visualize button
                 visualizeBtn = QPushButton("Visualize")
                 visualizeBtn.setProperty("workflow", workflow)
                 visualizeBtn.clicked.connect(self.onVisualizeWorkflow)
                 rowLayout.addWidget(visualizeBtn)
 
+                # Create a list widget item and attach the row widget
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, workflow)
                 item.setSizeHint(rowWidget.sizeHint())
