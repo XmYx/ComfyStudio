@@ -13,16 +13,14 @@ This plugin does two things:
 """
 
 import os
-import sys
-import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
 
-from PyQt6.QtCore import QThread, pyqtSignal, QObject, Qt
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import ( QDialog, QFormLayout, QLineEdit, QComboBox, QHBoxLayout,
-    QVBoxLayout, QDialogButtonBox, QLabel, QPushButton, QMessageBox, QInputDialog
-)
+from qtpy.QtCore import QThread
+from qtpy.QtGui import QAction
+from qtpy.QtWidgets import (QDialog, QFormLayout, QLineEdit, QComboBox, QHBoxLayout,
+                            QVBoxLayout, QDialogButtonBox, QLabel, QPushButton, QMessageBox
+                            )
+
 
 # ---------------------------------------------------------
 # HTTP Server Classes

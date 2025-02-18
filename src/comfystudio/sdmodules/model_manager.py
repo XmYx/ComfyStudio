@@ -1,7 +1,7 @@
 import json
 import os
-from PyQt6.QtCore import Qt, QThread
-from PyQt6.QtWidgets import (
+from qtpy.QtCore import Qt, QThread
+from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QProgressBar, QMessageBox,
     QFileDialog, QHeaderView
@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 
 from comfystudio.sdmodules.worker import DownloadWorker
 
-from PyQt6.QtGui import QIcon
+from qtpy.QtGui import QIcon
 
 class ModelManagerWindow(QDialog):
     """

@@ -11,10 +11,10 @@ import urllib
 from typing import Any, Dict
 
 import requests
-from PyQt6 import QtCore
-from PyQt6.QtCore import QThreadPool, QUrl, QMetaObject, pyqtSignal, Qt
-from PyQt6.QtGui import QAction, QCursor
-from PyQt6.QtWidgets import (
+from qtpy import QtCore
+from qtpy.QtCore import QThreadPool, QUrl, QMetaObject, pyqtSignal, Qt
+from qtpy.QtGui import QAction, QCursor
+from qtpy.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,

@@ -1,6 +1,6 @@
 import copy
 
-from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
+from qtpy.QtWidgets import QApplication, QMessageBox, QFileDialog
 
 
 # Default actions.
@@ -98,8 +98,8 @@ def import_files_for_param(window, param):
     QMessageBox.information(window, "Info", "Imported values have been assigned to shots.")
 
 
-from PyQt6.QtWidgets import QApplication, QMessageBox, QMenu, QDialog
-from PyQt6.QtGui import QCursor
+from qtpy.QtWidgets import QApplication, QMessageBox, QMenu, QDialog
+from qtpy.QtGui import QCursor
 
 def _get_registry():
     """

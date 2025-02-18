@@ -57,10 +57,10 @@ import copy
 from dataclasses import dataclass
 from typing import List
 
-from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import Qt, QSize, QRect
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
-from PyQt6.QtWidgets import (
+from qtpy import QtCore, QtGui, QtWidgets
+from qtpy.QtCore import Qt, QSize, QRect
+from qtpy.QtGui import QPixmap, QPainter, QPen, QColor
+from qtpy.QtWidgets import (
     QWidget,
     QListWidget,
     QVBoxLayout,

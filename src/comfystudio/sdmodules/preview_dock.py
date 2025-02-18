@@ -2,7 +2,7 @@
 import os
 import time
 
-from PyQt6.QtCore import QCoreApplication
+from qtpy.QtCore import QCoreApplication
 from qtpy.QtGui import QPixmap
 from qtpy.QtWidgets import (
     QWidget,

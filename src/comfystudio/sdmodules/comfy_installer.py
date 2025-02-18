@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from PyQt6.QtWidgets import QInputDialog
+from qtpy.QtWidgets import QInputDialog
 from qtpy.QtCore import (
     QObject,
     Signal,

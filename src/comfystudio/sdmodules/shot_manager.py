@@ -85,10 +85,10 @@ class ShotManager:
         videoPath = shot.get("videoPath", "")
         if videoPath and os.path.exists(videoPath):
             self.player.setSource(QUrl.fromLocalFile(videoPath))
-            self.player.play()
-            self.player.pause()
-        else:
-            self.player.setSource(QUrl())
+            # self.player.play()
+            # self.player.pause()
+        # else:
+        #     self.player.setSource(QUrl())
         self.videoWidget.setMinimumSize(320, 240)
         self.statusMessage.setText("Ready")
 

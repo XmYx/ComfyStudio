@@ -8,8 +8,8 @@ import subprocess
 import tempfile
 from typing import List, Dict
 
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QVBoxLayout
+from qtpy.QtGui import QPixmap
+from qtpy.QtWidgets import QVBoxLayout
 from qtpy.QtCore import (
     Qt,
     Slot,
@@ -189,33 +189,6 @@ class ComfyStudioBase:
             return
         self.addWorkflowToShot(path, isVideo=True)
 
-    def loadWorkflowJson(self, workflow=None, path="") -> dict:
-        """
-        Loads a workflow JSON from file.
-        If an "api_prompt" key exists at the root and its value is a dict, returns its value.
-        Otherwise, returns the full JSON as a dict.
-        Always returns a dict.
-        """
-        try:
-            if workflow:
-                path = workflow.path
-            with open(path, "r") as f:
-                data = json.load(f)
-            # Ensure the loaded data is a dict.
-            if not isinstance(data, dict):
-                logging.error(f"Loaded JSON is not a dict: {data}")
-                return {}
-            if "api_prompt" in data:
-                logging.info("Detected API formatted workflow JSON; using 'api_prompt' section.")
-                api_data = data["api_prompt"]
-                if not isinstance(api_data, dict):
-                    logging.error("The 'api_prompt' section is not a dict. Returning empty dict.")
-                    return {}
-                return api_data
-            return data
-        except Exception as e:
-            logging.error(f"Error loading workflow JSON: {e}")
-            return {}
     def addWorkflowToShot(self, workflow_path, isVideo=False):
         """
         Adds a new workflow to the currently selected shot, loading any default
@@ -229,9 +202,9 @@ class ComfyStudioBase:
 
         try:
             # Load the workflow JSON
-            # with open(workflow_path, "r") as f:
-            #     workflow_json = json.load(f)
-            workflow_json = self.loadWorkflowJson(path=workflow_path)
+            with open(workflow_path, "r") as f:
+                workflow_json = json.load(f)
+
             # Create a list of params to expose
             params_to_expose = []
             for node_id, node_data in workflow_json.items():
@@ -323,6 +296,7 @@ class ComfyStudioBase:
 
         version_dropdown = self.createWorkflowVersionDropdown(workflow)
         self.workflowParamsLayout.addWidget(version_dropdown)
+
         params_list = workflow.parameters.get("params", [])
 
         # 1) Group by node_id (or use nodeMetaTitle as key if you prefer).
@@ -533,6 +507,7 @@ class ComfyStudioBase:
     #     if currentItem:
     #         self.onWorkflowItemClicked(currentItem)
 
+
     def setParamValueInShots(self, param: dict, onlySelected: bool, item):
         """
         Copies this param's current value to the same-named parameter in either:
@@ -540,11 +515,10 @@ class ComfyStudioBase:
           - all shots
 
         If 'param' is a shot param, it matches shot params.
-        If 'param' is a workflow param, it matches workflow params with the same name, workflow path,
-        and matching nodeIDs.
+        If 'param' is a workflow param, it matches workflow params with the same name and workflow path.
 
         Args:
-            param (dict): The parameter dictionary containing at least 'name', 'value', and optionally 'nodeIDs'.
+            param (dict): The parameter dictionary containing at least 'name', 'value', and optionally 'workflow_path'.
             onlySelected (bool): If True, apply changes only to selected shots; otherwise, apply to all shots.
         """
         # 1) Determine if it's a shot-level or workflow-level param
@@ -593,8 +567,7 @@ class ComfyStudioBase:
                 # For workflow-level param, update only in the specified workflow
                 if not workflow_path:
                     logging.warning(
-                        f"Workflow path not provided for parameter '{param_name}'. Skipping shot index {sidx}."
-                    )
+                        f"Workflow path not provided for parameter '{param_name}'. Skipping shot index {sidx}.")
                     continue  # Cannot determine which workflow to update without the path
 
                 # Find the workflow with the matching path
@@ -607,9 +580,7 @@ class ComfyStudioBase:
                     if "params" not in wf.parameters:
                         continue
                     for p in wf.parameters["params"]:
-                        # Only update if both the parameter name and nodeIDs match
-                        if (p["name"] == param_name and
-                                p.get("nodeIDs", []) == param.get("nodeIDs", [])):
+                        if p["name"] == param_name:
                             p["value"] = new_value
                     # Save changes and refresh the workflow's parameter list in the UI
                     self.saveCurrentWorkflowParamsForShot(wf)
@@ -666,28 +637,10 @@ class ComfyStudioBase:
             w.setText(str(pval))
             w.textChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
-    # def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: Dict, newVal):
-    #     param["value"] = newVal
-    #     self.saveCurrentWorkflowParams()
-
-    @Slot()
-    def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: dict, newVal):
-        # Update the parameter value in the live settings.
+    def onWorkflowParamChanged(self, workflow: WorkflowAssignment, param: Dict, newVal):
         param["value"] = newVal
-
-        # If a version dropdown was previously used, reset it so that live parameters are now in effect.
-        if hasattr(workflow, "version_dropdown"):
-            workflow.version_dropdown.blockSignals(True)
-            workflow.version_dropdown.setCurrentIndex(0)  # Reset to placeholder "Select version"
-            workflow.version_dropdown.blockSignals(False)
-
-        # Save the updated parameters.
         self.saveCurrentWorkflowParams()
 
-        # Refresh the parameter list so the UI reflects the new live values.
-        shot = self.getShotForWorkflow(workflow)
-        if shot:
-            self.refreshParamsList(shot)
 
     def onWorkflowListContextMenu(self, pos):
         item = self.workflowListWidget.itemAt(pos)

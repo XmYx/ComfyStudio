@@ -3,12 +3,14 @@ import copy
 import os
 import time
 
-from PyQt6.QtCore import QMetaObject, QEventLoop, QCoreApplication, QMutex, QWaitCondition, QSemaphore, QObject, QThread
+from qtpy.QtCore import QMetaObject, QEventLoop, QCoreApplication, QSemaphore, QObject, \
+    QThread, QUrl
 from qtpy.QtCore import (
     Qt,
     QPoint,
     Signal
 )
+from qtpy.QtWidgets import QSplitter
 from qtpy.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -21,7 +23,6 @@ from qtpy.QtWidgets import (
     QComboBox,
     QMessageBox,
     QTabWidget,
-    QAbstractItemView,
     QInputDialog
 )
 
@@ -32,7 +33,6 @@ from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
 from comfystudio.sdmodules.new_widget import ShotManagerWidget as ReorderableListWidget
 from comfystudio.sdmodules.preview_dock import ShotPreviewDock
 from comfystudio.sdmodules.shot_manager import ShotManager
-
 
 
 class ProcessApiRequestWorker(QObject):
@@ -85,14 +85,30 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         self._api_semaphore.release()
 
     def initUI(self):
-        central = QWidget()
+        # central = QWidget()
 
         # self.logStream = EmittingStream()
         # self.logStream.text_written.connect(self.appendLog)
 
-        self.setCentralWidget(central)
-        self.mainLayout = QVBoxLayout(central)
+        # self.setCentralWidget(central)
+        # self.mainLayout = QVBoxLayout(central)
+        mainContainer = QWidget()
+        # mainLayout = QVBoxLayout(mainContainer)
 
+        # Here, add your existing UI elements.
+        # For instance, you may want to add your shots list widget and dock tabs:
+        # mainLayout.addWidget(self.listWidgetBase)  # Your shot list widget
+        # mainLayout.addWidget(self.dockTabWidget)  # Your dock tab widget with workflows/params
+
+        # Create a QSplitter and add the main container.
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(mainContainer)
+
+        # Optionally, you can add additional widgets to the splitter here.
+        # For example, you could add a preview pane or any other widget.
+
+        # Set the splitter as the central widget.
+        self.setCentralWidget(splitter)
         # Shots list
         self.listWidgetBase = ReorderableListWidget(self)
         self.listWidget = self.listWidgetBase.shotListView
@@ -359,7 +375,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             return output_path
 
         except Exception as e:
-            # from PyQt6.QtWidgets import QMessageBox
+            # from qtpy.QtWidgets import QMessageBox
             # QMessageBox.warning(self, "API Request Error", f"Error processing API request: {e}")
             return None
 
@@ -406,7 +422,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
     #         output_path = shot.stillPath if shot.stillPath and os.path.exists(shot.stillPath) else ""
     #         return output_path
     #     except Exception as e:
-    #         from PyQt6.QtWidgets import QMessageBox
+    #         from qtpy.QtWidgets import QMessageBox
     #         QMessageBox.warning(self, "API Request Error", f"Error processing API request: {e}")
     #         return None
 
@@ -418,18 +434,17 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         Args:
             checked (bool): The checked state of the toggle action.
         """
-        pass
-        # if checked:
-        #     # Show the WebBrowser dock
-        #     self.webBrowserDock.setVisible(True)
-        #
-        #     # Retrieve the 'comfy_ip' URL from settings
-        #     comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
-        #     # Load the URL in the WebBrowser view
-        #     self.webBrowserView.setUrl(QUrl(comfy_ip))
-        # else:
-        #     # Hide the WebBrowser dock
-        #     self.webBrowserDock.hide()
+        if checked:
+            # Show the WebBrowser dock
+            self.webBrowserDock.setVisible(True)
+
+            # Retrieve the 'comfy_ip' URL from settings
+            comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
+            # Load the URL in the WebBrowser view
+            self.webBrowserView.setUrl(QUrl(comfy_ip))
+        else:
+            # Hide the WebBrowser dock
+            self.webBrowserDock.hide()
 
     def connectSignals(self):
 
@@ -639,7 +654,6 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                 if param.get("type", "string") == "string":
                     from comfystudio.sdmodules.core.param_context_menu import get_param_context_action_specs
                     # For debugging: print the current registry.
-                    from comfystudio.sdmodules.core.param_context_menu import _get_registry
                     # print("Current registry:", _get_registry())
                     action_specs = get_param_context_action_specs(self, param)
                     create_context_menu(self, action_specs, pos)

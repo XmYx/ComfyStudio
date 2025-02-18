@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import sys
 
-from PyQt6.QtCore import QCoreApplication, Qt
+from qtpy.QtCore import QCoreApplication, Qt
 from qtpy.QtWidgets import (
     QApplication,
     QStyleFactory

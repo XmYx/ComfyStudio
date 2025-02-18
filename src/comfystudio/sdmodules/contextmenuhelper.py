@@ -1,5 +1,5 @@
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenu
+from qtpy.QtGui import QAction
+from qtpy.QtWidgets import QMenu
 from qtpy.QtCore import QPoint
 
 def create_context_menu(parent, action_specs, pos: QPoint):
