@@ -809,41 +809,6 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         )
         return combo
 
-    def onWorkflowVersionChanged(self, workflow, combo):
-        idx = combo.currentIndex()
-        # Store the current selection
-        workflow.selected_version_index = idx
-        if idx <= 0:
-            return
-
-        version = combo.itemData(idx)
-        if not version:
-            return
-
-        workflow.parameters = copy.deepcopy(ensure_parameters_dict(version.get("params", {})))
-
-        shot = self.getShotForWorkflow(workflow)
-        if shot:
-            if version.get("is_video"):
-                shot.videoPath = version.get("output", "")
-            else:
-                shot.stillPath = version.get("output", "")
-            self.refreshWorkflowsList(shot)
-            self.refreshParamsList(shot)
-            try:
-                wf_index = shot.workflows.index(workflow)
-            except ValueError:
-                wf_index = 0
-            self.fillDock()
-            self.previewDock.showMediaForShotWorkflow(shot, wf_index)
-
-        # Schedule asynchronous update of the UI without rebuilding the dropdown unnecessarily.
-        current_item = self.workflowListWidget.currentItem()
-        if current_item:
-            QTimer.singleShot(0, lambda: self.onWorkflowItemClicked(current_item))
-
-        workflow.version_dropdown = combo
-
     # def onWorkflowVersionChanged(self, workflow, combo):
     #     idx = combo.currentIndex()
     #     if idx <= 0:
@@ -879,6 +844,40 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
     #         # Call the preview dock refresh function to display the new version.
     #         self.fillDock()
     #         self.previewDock.showMediaForShotWorkflow(shot, wf_index)
+    def onWorkflowVersionChanged(self, workflow, combo):
+        idx = combo.currentIndex()
+        # Store the current selection
+        workflow.selected_version_index = idx
+        if idx <= 0:
+            return
+
+        version = combo.itemData(idx)
+        if not version:
+            return
+
+        workflow.parameters = version.get("params", {})
+
+        shot = self.getShotForWorkflow(workflow)
+        if shot:
+            if version.get("is_video"):
+                shot.videoPath = version.get("output", "")
+            else:
+                shot.stillPath = version.get("output", "")
+            self.refreshWorkflowsList(shot)
+            self.refreshParamsList(shot)
+            try:
+                wf_index = shot.workflows.index(workflow)
+            except ValueError:
+                wf_index = 0
+            self.fillDock()
+            self.previewDock.showMediaForShotWorkflow(shot, wf_index)
+
+        # Schedule asynchronous update of the UI without rebuilding the dropdown unnecessarily.
+        current_item = self.workflowListWidget.currentItem()
+        if current_item:
+            QTimer.singleShot(0, lambda: self.onWorkflowItemClicked(current_item))
+
+        workflow.version_dropdown = combo
 
     def getShotForWorkflow(self, workflow: WorkflowAssignment):
         for shot in self.shots:
