@@ -491,7 +491,7 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         #     self.player.stop()
         # except Exception:
         #     pass
-        QMetaObject.invokeMethod(self.previewDock, "release_media", Qt.ConnectionType.QueuedConnection)
+        #QMetaObject.invokeMethod(self.previewDock, "release_media", Qt.ConnectionType.QueuedConnection)
         selected_items = self.listWidget.selectedItems()
 
         if len(selected_items) == 0:

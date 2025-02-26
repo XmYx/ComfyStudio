@@ -189,6 +189,21 @@ class ComfyStudioBase:
             return
         self.addWorkflowToShot(path, isVideo=True)
 
+    def addWorkflowToShot_(self, workflow_path, isVideo=False):
+        if self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
+            QMessageBox.warning(self, "Warning", "No shot selected.")
+            return
+
+        shot = self.shots[self.currentShotIndex]
+        new_workflow = WorkflowAssignment(
+            path=workflow_path,
+            enabled=True,
+            parameters={"params": {}},
+            isVideo=isVideo
+        )
+        shot.workflows.append(new_workflow)
+        print("Wf added to shot")
+
     def addWorkflowToShot(self, workflow_path, isVideo=False):
         """
         Adds a new workflow to the currently selected shot, loading any default
@@ -199,11 +214,11 @@ class ComfyStudioBase:
             return
 
         shot = self.shots[self.currentShotIndex]
-
         try:
             # Load the workflow JSON
-            with open(workflow_path, "r") as f:
-                workflow_json = json.load(f)
+            # with open(workflow_path, "r") as f:
+            #     workflow_json = json.load(f)
+            workflow_json = self.centralWidget().export_workflow_api()
 
             # Create a list of params to expose
             params_to_expose = []
@@ -271,6 +286,10 @@ class ComfyStudioBase:
 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
+
+
+
+
     def loadWorkflowDefaults(self, workflow_path):
         defaults = self.settingsManager.get("workflow_defaults", {})
         return defaults.get(workflow_path, None)
@@ -279,9 +298,26 @@ class ComfyStudioBase:
         workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
         if not workflow:
             return
+        # try:
+        #     with open(workflow.path, 'r') as f:
+        #         wf_json = json.load(f)
+        # except Exception as e:
+        #     QMessageBox.warning(self, "Error", f"Failed to load workflow JSON: {e}")
+        #     return
+        # Load the JSON into the node editor plugin (which is set as the central widget)
+        node_editor = self.centralWidget()
+        # if hasattr(node_editor, "load_json_from_data"):
+        node_editor.load_json(workflow.path)
+        # Keep a reference to the workflow being edited
+        self.currentWorkflow = workflow
 
-        self.workflowParamsGroup.setEnabled(True)
-
+    # def onWorkflowItemClicked(self, item):
+    #     workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
+    #     if not workflow:
+    #         return
+    #
+    #     self.workflowParamsGroup.setEnabled(True)
+    #
         # If you need to send signals:
         if self.currentShotIndex >= 0 and self.currentShotIndex < len(self.shots):
             shot = self.shots[self.currentShotIndex]

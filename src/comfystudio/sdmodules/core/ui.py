@@ -46,7 +46,8 @@ from comfystudio.sdmodules.core.base import ComfyStudioBase
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.model_manager import ModelManagerWindow
-from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
+# from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
+from comfystudio.sdmodules.wf_editor import WorkflowEditorDialog as WorkflowVisualizer
 from comfystudio.sdmodules.settings import SettingsDialog
 
 
@@ -134,7 +135,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 self
             )
             self.webBrowserDock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-
+            self.webBrowserDock.setObjectName('web_browser_dock')
             # Initialize the WebBrowser view
             from qtpy.QtWebEngineWidgets import QWebEngineView
 
@@ -869,9 +870,9 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 self.showWorkflowVisualizer(workflow)
     def showWorkflowVisualizer(self, workflow):
         try:
-            with open(workflow.path, "r") as f:
-                wf_json = json.load(f)
-            dlg = WorkflowVisualizer(wf_json, self)
+            # with open(workflow.path, "r") as f:
+            #     wf_json = json.load(f)
+            dlg = WorkflowVisualizer(workflow.path, self)
             dlg.exec()
         except:
             pass

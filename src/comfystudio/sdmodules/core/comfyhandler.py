@@ -308,96 +308,88 @@ class ComfyStudioComfyHandler:
         return signature
 
     def executeWorkflow(self, shotIndex, workflowIndex):
-        """
-        Executes a workflow for a given shot, sending its JSON to ComfyUI via a RenderWorker.
-        Only updates the relevant inputs in the existing JSON keys (no renumbering).
-        Adds debug prints to show exactly what parameters get overridden.
-        Overrides a node's input ONLY if node_id is listed in that param's "nodeIDs".
-        """
         shot = self.shots[shotIndex]
         workflow = shot.workflows[workflowIndex]
         isVideo = workflow.isVideo
         currentSignature = self.computeWorkflowSignature(shot, workflowIndex)
 
-        # First, check if an identical version already exists.
-        existing_output = None
-        # Compare the current workflow parameters with each saved version.
-        for version in workflow.versions:
-            # Here we assume that if the saved parameters (snapshot) are equal to the current
-            # workflow.parameters then nothing has changed. You may need to adjust this
-            # comparison if your workflow parameters include extra keys.
-            if version["params"] == workflow.parameters and (
-                    (version["is_video"] and isVideo) or ((not version["is_video"]) and not isVideo)):
-                if os.path.exists(version["output"]):
-                    existing_output = version["output"]
-                    break
+        # # First, check if an identical version already exists.
+        # existing_output = None
+        # for version in workflow.versions:
+        #     if version["params"] == workflow.parameters and (
+        #             (version["is_video"] and isVideo) or ((not version["is_video"]) and not isVideo)):
+        #         if os.path.exists(version["output"]):
+        #             existing_output = version["output"]
+        #             break
+        #
+        # if existing_output:
+        #     print(f"[DEBUG] Reusing existing rendered output for shot '{shot.name}' in workflow {workflowIndex}.")
+        #     if isVideo:
+        #         shot.videoPath = existing_output
+        #         shot.videoVersions.append(existing_output)
+        #         shot.currentVideoVersion = len(shot.videoVersions) - 1
+        #         shot.lastVideoSignature = currentSignature
+        #     else:
+        #         shot.stillPath = existing_output
+        #         shot.imageVersions.append(existing_output)
+        #         shot.currentImageVersion = len(shot.imageVersions) - 1
+        #         shot.lastStillSignature = currentSignature
+        #
+        #     if self.render_mode == 'per_shot':
+        #         self.workflowIndexInProgress += 1
+        #         self.processNextWorkflow()
+        #     elif self.render_mode == 'per_workflow':
+        #         self.startNextRender()
+        #     return
+        #
+        # # Also check if another shot already rendered this workflow with the same signature.
+        # alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
+        # if not alreadyRendered:
+        #     for other_shot_index, other_shot in enumerate(self.shots):
+        #         if other_shot_index == shotIndex:
+        #             continue
+        #         for other_wf_index, other_workflow in enumerate(other_shot.workflows):
+        #             if other_workflow.path != workflow.path:
+        #                 continue
+        #             other_signature = self.computeWorkflowSignature(other_shot, other_wf_index)
+        #             if other_signature == currentSignature:
+        #                 if isVideo and other_shot.videoPath and os.path.exists(other_shot.videoPath):
+        #                     print(
+        #                         f"[DEBUG] Reusing video from shot '{other_shot.name}' for current shot '{shot.name}'.")
+        #                     shot.videoPath = other_shot.videoPath
+        #                     shot.videoVersions.append(other_shot.videoPath)
+        #                     shot.currentVideoVersion = len(shot.videoVersions) - 1
+        #                     shot.lastVideoSignature = other_shot.lastVideoSignature
+        #                     workflow.lastSignature = currentSignature
+        #                 elif not isVideo and other_shot.stillPath and os.path.exists(other_shot.stillPath):
+        #                     print(
+        #                         f"[DEBUG] Reusing image from shot '{other_shot.name}' for current shot '{shot.name}'.")
+        #                     shot.stillPath = other_shot.stillPath
+        #                     shot.imageVersions.append(other_shot.stillPath)
+        #                     shot.currentImageVersion = len(shot.imageVersions) - 1
+        #                     shot.lastStillSignature = other_shot.lastStillSignature
+        #                     workflow.lastSignature = currentSignature
+        # alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
+        # if workflow.lastSignature == currentSignature and alreadyRendered and os.path.exists(alreadyRendered):
+        #     print(f"[DEBUG] Skipping workflow {workflowIndex} for shot '{shot.name}' because "
+        #           f"params haven't changed and a valid file exists.")
+        #     if self.render_mode == 'per_shot':
+        #         self.workflowIndexInProgress += 1
+        #         self.processNextWorkflow()
+        #     elif self.render_mode == 'per_workflow':
+        #         self.startNextRender()
+        #     return
 
-        if existing_output:
-            print(f"[DEBUG] Reusing existing rendered output for shot '{shot.name}' in workflow {workflowIndex}.")
-            # Update the shot with the output from the saved version.
-            if isVideo:
-                shot.videoPath = existing_output
-                shot.videoVersions.append(existing_output)
-                shot.currentVideoVersion = len(shot.videoVersions) - 1
-                shot.lastVideoSignature = currentSignature
-            else:
-                shot.stillPath = existing_output
-                shot.imageVersions.append(existing_output)
-                shot.currentImageVersion = len(shot.imageVersions) - 1
-                shot.lastStillSignature = currentSignature
+        # --- IMPORTANT: Work on a temporary deep copy of the parameters ---
+        local_params = copy.deepcopy(shot.params)
+        # Copy workflow parameters so that dynamic flags are preserved in the original.
+        wf_params = copy.deepcopy(workflow.parameters.get("params", []))
 
-            # self.updateList()
-            # self.shotRenderComplete.emit(shotIndex, workflowIndex, existing_output, isVideo)
-            if self.render_mode == 'per_shot':
-                self.workflowIndexInProgress += 1
-                self.processNextWorkflow()
-            elif self.render_mode == 'per_workflow':
-                self.startNextRender()
-            return
-        alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
-        if not alreadyRendered:
-            for other_shot_index, other_shot in enumerate(self.shots):
-                if other_shot_index == shotIndex:
-                    continue  # Skip current shot
-                for other_wf_index, other_workflow in enumerate(other_shot.workflows):
-                    if other_workflow.path != workflow.path:
-                        continue  # Different workflow path
-                    other_signature = self.computeWorkflowSignature(other_shot, other_wf_index)
-                    if other_signature == currentSignature:
-                        # Check if the other shot has a valid output
-                        if isVideo and other_shot.videoPath and os.path.exists(other_shot.videoPath):
-                            print(f"[DEBUG] Reusing video from shot '{other_shot.name}' for current shot '{shot.name}'.")
-                            shot.videoPath = other_shot.videoPath
-                            shot.videoVersions.append(other_shot.videoPath)
-                            shot.currentVideoVersion = len(shot.videoVersions) - 1
-                            shot.lastVideoSignature = other_shot.lastVideoSignature
-                            workflow.lastSignature = currentSignature
-                            # self.updateList()
-                            # self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.videoPath, True)
-                        elif not isVideo and other_shot.stillPath and os.path.exists(other_shot.stillPath):
-                            print(f"[DEBUG] Reusing image from shot '{other_shot.name}' for current shot '{shot.name}'.")
-                            shot.stillPath = other_shot.stillPath
-                            shot.imageVersions.append(other_shot.stillPath)
-                            shot.currentImageVersion = len(shot.imageVersions) - 1
-                            shot.lastStillSignature = other_shot.lastStillSignature
-                            workflow.lastSignature = currentSignature
-                            # self.updateList()
-                            # self.shotRenderComplete.emit(shotIndex, workflowIndex, other_shot.stillPath, False)
-
-        alreadyRendered = (shot.videoPath if isVideo else shot.stillPath)
-        if workflow.lastSignature == currentSignature and alreadyRendered and os.path.exists(alreadyRendered):
-            print(f"[DEBUG] Skipping workflow {workflowIndex} for shot '{shot.name}' because "
-                  f"params haven't changed and a valid file exists.")
-            if self.render_mode == 'per_shot':
-                self.workflowIndexInProgress += 1
-                self.processNextWorkflow()
-            elif self.render_mode == 'per_workflow':
-                self.startNextRender()
-            return
-
+        print("[DEBUG] Original workflow JSON keys:")
         try:
             with open(workflow.path, "r") as f:
                 workflow_json = json.load(f)
+            workflow_json = self.centralWidget().export_workflow_api()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
             if self.render_mode == 'per_shot':
@@ -407,62 +399,45 @@ class ComfyStudioComfyHandler:
                 self.startNextRender()
             return
 
-        # Prepare any param overrides for workflow_json if needed
-        local_params = copy.deepcopy(shot.params)
-        wf_params = workflow.parameters.get("params", [])
-
-        print("[DEBUG] Original workflow JSON keys:")
-        for k in workflow_json.keys():
-            print("       ", k)
-
-        # Apply dynamic overrides based on render mode
+        # Apply dynamic overrides to the temporary workflow parameters copy.
         if self.render_mode in ['per_shot', 'per_workflow']:
             if self.render_mode == 'per_shot':
-                if self.workflowIndexInProgress > 0:
-                    prevWorkflowIndex = self.workflowQueue.get(shotIndex, [])[self.workflowIndexInProgress - 1]
-                else:
-                    prevWorkflowIndex = None
-            elif self.render_mode == 'per_workflow':
-                if workflowIndex > 0:
-                    prevWorkflowIndex = workflowIndex - 1
-                else:
-                    prevWorkflowIndex = None
+                prevWorkflowIndex = (self.workflowQueue.get(shotIndex, [])[self.workflowIndexInProgress - 1]
+                                     if self.workflowIndexInProgress > 0 else None)
+            else:  # per_workflow
+                prevWorkflowIndex = (workflowIndex - 1 if workflowIndex > 0 else None)
             if prevWorkflowIndex is not None:
                 prevWf = shot.workflows[prevWorkflowIndex]
-                # Determine the previous output based on the workflow type
                 prevVideo = shot.videoPath if prevWf.isVideo and shot.videoPath else None
                 prevImage = shot.stillPath if (not prevWf.isVideo) and shot.stillPath else None
                 for param in wf_params:
                     if param.get("usePrevResultImage") and prevImage:
-                        print(f"[DEBUG] Setting param '{param['name']}' to prevImage: {prevImage}")
+                        print(f"[DEBUG] (Dynamic) Setting param '{param['name']}' to prevImage: {prevImage}")
                         param["value"] = prevImage
                     if param.get("usePrevResultVideo") and prevVideo:
-                        print(f"[DEBUG] Setting param '{param['name']}' to prevVideo: {prevVideo}")
+                        print(f"[DEBUG] (Dynamic) Setting param '{param['name']}' to prevVideo: {prevVideo}")
                         param["value"] = prevVideo
 
-        # Override workflow_json with local_params + wf_params
+        # Now override the workflow JSON inputs using the temporary parameters.
         for node_id, node_data in workflow_json.items():
             inputs_dict = node_data.get("inputs", {})
             meta_title = node_data.get("_meta", {}).get("title", "").lower()
 
-            # 1) Shot-level param overrides (with nodeIDs check)
+            # 1) Override using shot-level parameters.
             for input_key in list(inputs_dict.keys()):
                 ikey_lower = str(input_key).lower()
                 for param in local_params:
-                    # If param is for this node_id
                     node_ids = param.get("nodeIDs", [])
                     if str(node_id) not in node_ids:
-                        continue  # skip if this param is not meant for this node
-
-                    # If the param name matches this input key
+                        continue
                     if param["name"].lower() == ikey_lower:
                         old_val = inputs_dict[input_key]
                         new_val = param["value"]
-                        print(f"[DEBUG] Overriding node '{node_id}' input '{input_key}' "
-                              f"from '{old_val}' to '{new_val}' (SHOT-level param)")
+                        print(
+                            f"[DEBUG] Overriding node '{node_id}' input '{input_key}' from '{old_val}' to '{new_val}' (SHOT-level)")
                         inputs_dict[input_key] = new_val
 
-            # 2) Workflow-level param overrides (with nodeIDs check)
+            # 2) Override using workflow-level parameters (temporary copy).
             for input_key in list(inputs_dict.keys()):
                 ikey_lower = str(input_key).lower()
                 for param in wf_params:
@@ -472,24 +447,22 @@ class ComfyStudioComfyHandler:
                     if param["name"].lower() == ikey_lower:
                         old_val = inputs_dict[input_key]
                         new_val = param["value"]
-                        print(f"[DEBUG] Overriding node '{node_id}' input '{input_key}' "
-                              f"from '{old_val}' to '{new_val}' (WF-level param)")
+                        print(
+                            f"[DEBUG] Overriding node '{node_id}' input '{input_key}' from '{old_val}' to '{new_val}' (WF-level)")
                         inputs_dict[input_key] = new_val
 
-            # 3) Special override for "positive prompt" if found in shot params
+            # 3) Special case: "positive prompt" override.
             if "positive prompt" in [p["name"].lower() for p in local_params] and "positive prompt" in meta_title:
                 for param in local_params:
                     if param["name"].lower() == "positive prompt":
                         node_ids = param.get("nodeIDs", [])
-                        # If no nodeIDs on the param, or the node_id is listed, we override 'text'
                         if not node_ids or str(node_id) in node_ids:
                             old_val = inputs_dict.get("text", "")
                             new_val = param["value"]
-                            print(f"[DEBUG] Overriding node '{node_id}' 'text' from '{old_val}' to '{new_val}' "
-                                  f"(POSITIVE PROMPT param)")
+                            print(
+                                f"[DEBUG] Overriding node '{node_id}' text from '{old_val}' to '{new_val}' (positive prompt)")
                             inputs_dict["text"] = new_val
 
-        # Create and start the RenderWorker to handle submission + result polling
         comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188")
         worker = RenderWorker(
             workflow_json=workflow_json,
@@ -498,27 +471,49 @@ class ComfyStudioComfyHandler:
             comfy_ip=comfy_ip,
             parent=self
         )
-        # Connect signals
         worker.signals.result.connect(lambda data, si, iv: self.onComfyResult(data, si, workflowIndex))
         worker.signals.error.connect(self.onComfyError)
         worker.signals.finished.connect(self.onComfyFinished)
-
-        # Show final structure in debug before sending
-        # print("[DEBUG] Final workflow JSON structure before sending:")
-        # for k, v in workflow_json.items():
-        #     print("       Node ID:", k)
-        #     print("               ", v)
-
-        # Start
-        self.status_widgets["statusMessage"].setText(f"Rendering {shot.name} - Workflow {workflowIndex + 1}/{len(shot.workflows)} ...")
-        self.activeWorker = worker  # Keep a reference to prevent garbage collection
+        self.status_widgets["statusMessage"].setText(
+            f"Rendering {shot.name} - Workflow {workflowIndex + 1}/{len(shot.workflows)} ..."
+        )
+        self.activeWorker = worker
         QThreadPool.globalInstance().start(worker)
 
+    def updateWorkflowParameters(self, shotIndex, workflowIndex):
+        shot = self.shots[shotIndex]
+        workflow = shot.workflows[workflowIndex]
+        wf_json = None
+        # If the central widget is the node editor plugin, use its export; otherwise load from file.
+        node_editor = self.centralWidget() if hasattr(self, "centralWidget") else None
+        if node_editor and hasattr(node_editor, "export_workflow_api"):
+            wf_json = node_editor.export_workflow_api()
+        else:
+            try:
+                with open(workflow.path, "r") as f:
+                    wf_json = json.load(f)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
+        if wf_json:
+            workflow.parameters = wf_json  # persist changes even if not visualized
+        return wf_json
     def onComfyResult(self, result_data, shotIndex, workflowIndex):
         """
         Handle the result data returned by a RenderWorker for the given shot/workflow.
         Ensures the shot's stillPath or videoPath is set before the next workflow runs.
         """
+
+        prompt_key = next(iter(result_data))
+        res = result_data[prompt_key]
+        outputs = res.get("outputs", {})
+
+        # Update each node that has an output result.
+        for new_id, output in outputs.items():
+            node = self.centralWidget()._last_export_mapping.get(new_id)
+            if node is not None:
+                # Call the node model's update_preview method with the output data.
+                node.model.update_preview(output)
+
         shot = self.shots[shotIndex]
         workflow = shot.workflows[workflowIndex]
 

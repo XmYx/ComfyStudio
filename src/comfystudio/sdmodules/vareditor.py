@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 import requests
 from qtpy import QtCore
-from qtpy.QtCore import QThreadPool, QUrl, QMetaObject, pyqtSignal, Qt
+from qtpy.QtCore import QThreadPool, QUrl, QMetaObject, Signal, Qt
 from qtpy.QtGui import QAction, QCursor
 from qtpy.QtWidgets import (
     QApplication,
@@ -202,7 +202,7 @@ class GlobalVariablesEditor(QDialog):
     Users can add, name, and set variables to int, float, or string values.
     These variables can then be referenced directly by their names in expressions.
     """
-    variablesChanged = pyqtSignal(dict)
+    variablesChanged = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)

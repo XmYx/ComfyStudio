@@ -12,7 +12,6 @@ class WorkflowAssignment:
     isVideo: bool = False
     lastSignature: str = field(default_factory=str)
     versions: List[Dict[str, Any]] = field(default_factory=list)  # New field for version snapshots
-
     def to_dict(self) -> Dict[str, Any]:
         return {
             "path": self.path,
@@ -22,7 +21,6 @@ class WorkflowAssignment:
             "lastSignature": self.lastSignature,
             "versions": self.versions  # Include versions when serializing
         }
-
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'WorkflowAssignment':
         return cls(
@@ -33,7 +31,6 @@ class WorkflowAssignment:
             lastSignature=data.get('lastSignature', ""),
             versions=data.get('versions', [])  # Load versions if present
         )
-
     def get(self, name, default=None):
         if hasattr(self, name):
             return getattr(self, name)
