@@ -74,11 +74,34 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 - `Shot.graph = {"connections": [...], "positions": {uid: [x, y]}}`. A connection is
   `{"from": {"wf": uid, "port": id}, "to": {"wf": uid, "port": id}}` where a port id is
   `workflow_param_port_id(param)` (= `name@nodeIDs`, the same identity
-  `syncWorkflowFromFile` merges by) or the reserved `RESULT_PORT` (`"__result__"`,
-  output-only: the workflow's rendered file). Connections are **within one shot only**.
+  `syncWorkflowFromFile` merges by), the reserved `RESULT_PORT` (`"__result__"`,
+  output-only: the workflow's rendered file), or `node_output_port_id(node_id, slot)`
+  (`"nodeout:<node_id>:<slot>"`, output-only: a ComfyUI node's output). Connections
+  are **within one shot only**. The whole graph persists via `Shot.to_dict()` in the
+  project JSON.
 - Params opt into ports via `graphInput` / `graphOutput` flags (a param may be both);
   these flags are in `syncWorkflowFromFile`'s preserve list and the defaults merge —
   keep them there when adding new port-related keys.
+- ComfyUI node outputs: the API JSON never declares them, so
+  `extractWorkflowNodeOutputs` infers slots from `[node_id, slot]` links (slot 0
+  always assumed — terminal nodes like SaveImage produce files without being
+  referenced). Exposure choices live in
+  `workflow.parameters["exposedNodeOutputs"]` (`[{"port", "label", "type"}]`, pruned by
+  `syncWorkflowFromFile` when the node disappears).
+- Port datatypes (`sdmodules/comfy_datatypes.py`): ports carry ComfyUI-convention
+  types and colours (`COMFY_TYPE_COLORS`; edges take the source type's colour).
+  Param ports map widget types (INT/FLOAT/BOOLEAN/STRING); Result is IMAGE/VIDEO
+  (last render, else the isVideo hint); node-output types are inferred **at exposure
+  time** by `infer_node_output_type` (consumer input name → type, else class-name
+  heuristic, else `"*"` wildcard) and stored in the exposure entry.
+  `types_compatible` gates `tryConnect`: equal types or `"*"` match; STRING inputs
+  additionally accept IMAGE/VIDEO (chaining passes file paths); FLOAT accepts INT;
+  everything else is refused with a status message. Existing connections are never
+  retro-validated. At render time `onComfyResult`
+  records one file per output node in `workflow.lastNodeOutputs` (`{node_id: path}`);
+  `resolveGraphInputs` feeds `nodeout:` connections from it, falling back to
+  `_latestWorkflowOutput`. Non-file node outputs (MODEL/CLIP/LATENT…) can be exposed
+  but only resolve when that node produced a history output file.
 - Render order = `topoSortedWorkflowIndices` (Kahn, list-index tie-break; cycle →
   warning + list-order fallback). `resolveGraphInputs` fills connected params before
   the signature is computed; legacy `usePrevResultImage/Video` flags remain honored as

@@ -24,7 +24,12 @@ from qtpy.QtWidgets import (
 )
 
 from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
-from comfystudio.sdmodules.cs_datastruts import RESULT_PORT, Shot, workflow_param_port_id
+from comfystudio.sdmodules.cs_datastruts import (
+    RESULT_PORT,
+    Shot,
+    node_output_port_node_id,
+    workflow_param_port_id,
+)
 from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
 
 
@@ -324,8 +329,17 @@ class ComfyStudioComfyHandler:
             src_wf = by_uid.get(src.get("wf"))
             if param is None or src_wf is None:
                 continue
-            if src.get("port") == RESULT_PORT:
-                value = self._latestWorkflowOutput(shot, src_wf, param)
+            src_node_id = node_output_port_node_id(src.get("port"))
+            if src.get("port") == RESULT_PORT or src_node_id is not None:
+                value = None
+                if src_node_id is not None:
+                    # Exposed ComfyUI node output: the file that node produced
+                    # on the last render (recorded in onComfyResult).
+                    node_file = src_wf.lastNodeOutputs.get(src_node_id, "")
+                    if node_file and os.path.exists(node_file):
+                        value = node_file
+                if value is None:
+                    value = self._latestWorkflowOutput(shot, src_wf, param)
                 if value is None:
                     logging.info(f"Graph input '{param['name']}' has no rendered source output "
                                  f"yet (from '{os.path.basename(src_wf.path)}').")
@@ -648,30 +662,31 @@ class ComfyStudioComfyHandler:
             self.processNextWorkflow()
             return
 
+        # One produced file per output node (first image, else first gif); the
+        # first node's file stays the workflow's main result, the rest feed
+        # exposed node-output ports on the shot graph.
+        node_files = {}  # node_id -> (comfy_path, is_video)
         final_path = None
         final_is_video = False
         for node_id, output_data in outputs.items():
-            # Check images
-            images = output_data.get("images", [])
-            for image_info in images:
+            entry = None
+            for image_info in output_data.get("images", []):
                 filename = image_info.get("filename")
-                subfolder = image_info.get("subfolder", "")
                 if filename:
-                    final_path = os.path.join(subfolder, filename) if subfolder else filename
+                    subfolder = image_info.get("subfolder", "")
+                    entry = (os.path.join(subfolder, filename) if subfolder else filename, False)
                     break
-            if final_path:
-                break
-            # Check gifs (or any other video-like outputs)
-            gifs = output_data.get("gifs", [])
-            for gif_info in gifs:
-                filename = gif_info.get("filename")
-                subfolder = gif_info.get("subfolder", "")
-                if filename:
-                    final_path = os.path.join(subfolder, filename) if subfolder else filename
-                    final_is_video = True
-                    break
-            if final_path:
-                break
+            if entry is None:
+                for gif_info in output_data.get("gifs", []):
+                    filename = gif_info.get("filename")
+                    if filename:
+                        subfolder = gif_info.get("subfolder", "")
+                        entry = (os.path.join(subfolder, filename) if subfolder else filename, True)
+                        break
+            if entry is not None:
+                node_files[str(node_id)] = entry
+                if final_path is None:
+                    final_path, final_is_video = entry
 
         if final_path:
             # Download from Comfy's output folder to our project or temp folder
@@ -687,29 +702,42 @@ class ComfyStudioComfyHandler:
                 else:
                     project_folder = tempfile.gettempdir()
 
-            local_path = self.downloadComfyFile(final_path)
-            if local_path:
+            shot_name = shot.name.replace(" ", "_")
+            version_number = len(workflow.versions) + 1  # 1-indexed version
+            timestamp = int(time.time())
+            new_full = None
+            workflow.lastNodeOutputs = {}
+            for out_node_id, (comfy_path, is_video) in node_files.items():
+                local_path = self.downloadComfyFile(comfy_path)
+                if not local_path:
+                    continue
                 ext = os.path.splitext(local_path)[1]
                 # Choose subfolder based on media type.
-                if final_is_video or workflow.isVideo:
+                if is_video or workflow.isVideo:
                     subfolder = os.path.join(project_folder, "videos")
                 else:
                     subfolder = os.path.join(project_folder, "stills")
                 if not os.path.exists(subfolder):
                     os.makedirs(subfolder, exist_ok=True)
-                # Sanitize the shot name and build a filename in the format:
-                # shot_workflow_version_timestamp.ext
-                shot_name = shot.name.replace(" ", "_")
-                version_number = len(workflow.versions) + 1  # 1-indexed version
-                timestamp = int(time.time())
-                new_name = f"{shot_name}_{workflowIndex}_{version_number}_{timestamp}{ext}"
-                new_full = os.path.join(subfolder, new_name)
+                is_final = (comfy_path == final_path)
+                # shot_workflow_version_timestamp.ext; secondary output nodes
+                # get a node-id marker so their files don't collide.
+                if is_final:
+                    new_name = f"{shot_name}_{workflowIndex}_{version_number}_{timestamp}{ext}"
+                else:
+                    new_name = f"{shot_name}_{workflowIndex}_n{out_node_id}_{version_number}_{timestamp}{ext}"
+                dest = os.path.join(subfolder, new_name)
                 try:
-                    with open(local_path, "rb") as src, open(new_full, "wb") as dst:
+                    with open(local_path, "rb") as src, open(dest, "wb") as dst:
                         dst.write(src.read())
                 except Exception:
-                    new_full = local_path
+                    dest = local_path
+                # Feeds exposed node-output ports on the shot graph.
+                workflow.lastNodeOutputs[out_node_id] = dest
+                if is_final:
+                    new_full = dest
 
+            if new_full:
                 # --- IMPORTANT: Update the Shot with the new file path *now*, so the next workflow can see it ---
                 if final_is_video or workflow.isVideo:
                     shot.videoPath = new_full

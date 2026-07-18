@@ -10,6 +10,11 @@ import cv2
 # shot workflow graph. Never stored in a param dict.
 RESULT_PORT = "__result__"
 
+# Port-id prefix for an exposed ComfyUI node output ("nodeout:<node_id>:<slot>").
+# Exposure choices live in workflow.parameters["exposedNodeOutputs"]
+# ([{"port", "label"}]) so they serialize with the assignment.
+NODE_OUTPUT_PREFIX = "nodeout:"
+
 
 def workflow_param_port_id(param: Dict[str, Any]) -> str:
     """
@@ -18,6 +23,18 @@ def workflow_param_port_id(param: Dict[str, Any]) -> str:
     ids survive workflow file resyncs.
     """
     return f"{param.get('name', '')}@{','.join(str(n) for n in param.get('nodeIDs', []))}"
+
+
+def node_output_port_id(node_id, slot=0) -> str:
+    """Port id for a ComfyUI node's output slot."""
+    return f"{NODE_OUTPUT_PREFIX}{node_id}:{slot}"
+
+
+def node_output_port_node_id(port) -> 'str | None':
+    """The ComfyUI node id of a node-output port id, or None for other ports."""
+    if isinstance(port, str) and port.startswith(NODE_OUTPUT_PREFIX):
+        return port[len(NODE_OUTPUT_PREFIX):].rsplit(":", 1)[0]
+    return None
 
 
 def default_shot_graph() -> Dict[str, Any]:
@@ -55,6 +72,9 @@ class WorkflowAssignment:
     # Most recent rendered output of this workflow (the graph "Result" port).
     lastOutput: str = ""
     lastOutputIsVideo: bool = False
+    # Most recent rendered file per ComfyUI output node ({node_id: path}) —
+    # feeds exposed node-output ports ("nodeout:<node_id>:<slot>").
+    lastNodeOutputs: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.uid:
@@ -71,7 +91,8 @@ class WorkflowAssignment:
             "selected_version_index": self.selected_version_index,
             "uid": self.uid,
             "lastOutput": self.lastOutput,
-            "lastOutputIsVideo": self.lastOutputIsVideo
+            "lastOutputIsVideo": self.lastOutputIsVideo,
+            "lastNodeOutputs": self.lastNodeOutputs
         }
 
     @classmethod
@@ -86,7 +107,8 @@ class WorkflowAssignment:
             selected_version_index=data.get('selected_version_index', 0),
             uid=data.get('uid', ""),  # empty -> __post_init__ generates one
             lastOutput=data.get('lastOutput', ""),
-            lastOutputIsVideo=data.get('lastOutputIsVideo', False)
+            lastOutputIsVideo=data.get('lastOutputIsVideo', False),
+            lastNodeOutputs=data.get('lastNodeOutputs', {}) or {}
         )
 
     def get(self, name, default=None):

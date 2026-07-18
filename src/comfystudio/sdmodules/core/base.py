@@ -37,6 +37,7 @@ from comfystudio.sdmodules.cs_datastruts import (
     Shot,
     WorkflowAssignment,
     ensure_unique_workflow_uids,
+    node_output_port_node_id,
     workflow_param_port_id,
 )
 from comfystudio.sdmodules.localization import LocalizationManager
@@ -282,6 +283,38 @@ class ComfyStudioBase:
                 })
         return params_to_expose
 
+    def extractWorkflowNodeOutputs(self, workflow_json):
+        """
+        Discovers each node's output slots in an API-format workflow. The API
+        JSON never declares outputs, so slots are inferred from the links that
+        reference them ([node_id, slot]); slot 0 is always assumed because
+        terminal output nodes (SaveImage & co.) produce files without being
+        referenced by anything.
+        Returns [{"node_id", "title", "slots"}] in JSON order.
+        """
+        referenced = {}
+        for node_data in workflow_json.values():
+            if not isinstance(node_data, dict):
+                continue
+            inputs = node_data.get("inputs", {})
+            if not isinstance(inputs, dict):
+                continue
+            for value in inputs.values():
+                if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[1], int):
+                    referenced.setdefault(str(value[0]), set()).add(value[1])
+
+        nodes = []
+        for node_id, node_data in workflow_json.items():
+            if not isinstance(node_data, dict):
+                continue
+            meta = node_data.get("_meta", {})
+            title = meta.get("title", "") if isinstance(meta, dict) else ""
+            if not title:
+                title = node_data.get("class_type", f"Node {node_id}")
+            slots = sorted(referenced.get(str(node_id), set()) | {0})
+            nodes.append({"node_id": str(node_id), "title": title, "slots": slots})
+        return nodes
+
     def syncWorkflowFromFile(self, workflow_path):
         """
         Re-reads a workflow file and updates the parameters of every shot
@@ -330,7 +363,15 @@ class ComfyStudioBase:
                             new_param["global_var"] = old["global_var"]
                     merged.append(new_param)
                 wf.parameters["params"] = merged
-                # Inputs removed from the file may have been graph ports.
+                # Drop node-output exposures whose node no longer exists.
+                exposures = wf.parameters.get("exposedNodeOutputs", [])
+                if exposures:
+                    node_ids = {str(nid) for nid in wf_json.keys()}
+                    wf.parameters["exposedNodeOutputs"] = [
+                        e for e in exposures
+                        if node_output_port_node_id(e.get("port", "")) in node_ids
+                    ]
+                # Inputs/nodes removed from the file may have been graph ports.
                 self.pruneInvalidConnections(shot)
                 changed_any = True
 
@@ -803,6 +844,12 @@ class ComfyStudioBase:
         def port_exists(wf, port, is_source):
             if port == RESULT_PORT:
                 return is_source  # Result is an output-only port
+            if node_output_port_node_id(port) is not None:
+                # Node outputs are output-only and valid while still exposed.
+                return is_source and any(
+                    e.get("port") == port
+                    for e in wf.parameters.get("exposedNodeOutputs", [])
+                )
             return any(
                 workflow_param_port_id(p) == port
                 for p in wf.parameters.get("params", [])

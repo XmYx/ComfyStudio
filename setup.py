@@ -17,7 +17,8 @@ setup(
         'qtpy',
         'opencv-contrib-python',
         'av',
-        'huggingface-hub'
+        'huggingface-hub',
+        'bs4'
     ],
     entry_points={
         'console_scripts': [

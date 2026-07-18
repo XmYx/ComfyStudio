@@ -32,7 +32,19 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from comfystudio.sdmodules.cs_datastruts import RESULT_PORT, workflow_param_port_id
+from comfystudio.sdmodules.comfy_datatypes import (
+    color_for_type,
+    infer_node_output_type,
+    param_port_type,
+    result_port_type,
+    types_compatible,
+)
+from comfystudio.sdmodules.cs_datastruts import (
+    RESULT_PORT,
+    node_output_port_id,
+    node_output_port_node_id,
+    workflow_param_port_id,
+)
 
 PORT_RADIUS = 6
 NODE_WIDTH = 230
@@ -51,9 +63,8 @@ class PortItem(QGraphicsEllipseItem):
         self.wf_uid = wf_uid
         self.port_id = port_id
         self.direction = direction  # "in" | "out"
-        self.ptype = ptype
-        self._base_color = QColor("#7fd4ff") if port_id == RESULT_PORT else (
-            QColor("#9fe89f") if direction == "in" else QColor("#f5c66e"))
+        self.ptype = ptype  # canonical ComfyUI-style type (or "*")
+        self._base_color = QColor(color_for_type(ptype))
         self.setBrush(QBrush(self._base_color))
         self.setPen(QPen(QColor("#222"), 1))
         self.setAcceptHoverEvents(True)
@@ -83,7 +94,9 @@ class EdgeItem(QGraphicsPathItem):
         self.dst_port = dst_port
         self.setZValue(0)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setPen(QPen(QColor("#8ab4ff"), 2))
+        # ComfyUI convention: links take the source type's colour.
+        self._base_color = QColor(color_for_type(src_port.ptype))
+        self.setPen(QPen(self._base_color, 2))
         self.updatePath()
 
     def updatePath(self):
@@ -100,7 +113,7 @@ class EdgeItem(QGraphicsPathItem):
         if self.isSelected():
             self.setPen(QPen(QColor("#ffe066"), 3))
         else:
-            self.setPen(QPen(QColor("#8ab4ff"), 2))
+            self.setPen(QPen(self._base_color, 2))
         super().paint(painter, option, widget)
 
     def contextMenuEvent(self, event):
@@ -123,8 +136,31 @@ class WorkflowNodeItem(QGraphicsRectItem):
 
         params = workflow.parameters.get("params", [])
         inputs = [p for p in params if p.get("graphInput")]
-        outputs = [p for p in params if p.get("graphOutput")]
-        rows = max(len(inputs), len(outputs) + 1)  # +1: implicit Result port
+        # Output rows: exposed params, then exposed ComfyUI node outputs.
+        out_entries = []
+        for p in params:
+            if p.get("graphOutput"):
+                label = p.get("displayName", p.get("name", ""))
+                ptype = param_port_type(p)
+                out_entries.append({
+                    "port": workflow_param_port_id(p),
+                    "label": label,
+                    "ptype": ptype,
+                    "tooltip": f"{label} ({ptype})",
+                })
+        for entry in workflow.parameters.get("exposedNodeOutputs", []):
+            port = entry.get("port", "")
+            label = entry.get("label") or port
+            ptype = entry.get("type", "*")  # inferred at exposure time
+            tooltip = f"{label} ({ptype})"
+            nid = node_output_port_node_id(port)
+            node_file = workflow.lastNodeOutputs.get(nid, "") if nid else ""
+            if node_file:
+                tooltip += f"\n{node_file}"
+            out_entries.append({"port": port, "label": label,
+                                "ptype": ptype, "tooltip": tooltip})
+
+        rows = max(len(inputs), len(out_entries) + 1)  # +1: implicit Result port
         height = HEADER_HEIGHT + rows * ROW_HEIGHT + 8
         super().__init__(0, 0, NODE_WIDTH, height)
 
@@ -151,7 +187,7 @@ class WorkflowNodeItem(QGraphicsRectItem):
             y = HEADER_HEIGHT + i * ROW_HEIGHT + ROW_HEIGHT / 2
             port_id = workflow_param_port_id(param)
             port = PortItem(self, workflow.uid, port_id, "in",
-                            param.get("type", "string"),
+                            param_port_type(param),
                             param.get("displayName", param.get("name", "")))
             port.setPos(0, y)
             self.ports[(port_id, "in")] = port
@@ -159,24 +195,25 @@ class WorkflowNodeItem(QGraphicsRectItem):
             label.setBrush(QBrush(QColor("#dddddd")))
             label.setPos(12, y - 7)
 
-        for i, param in enumerate(outputs):
+        for i, entry in enumerate(out_entries):
             y = HEADER_HEIGHT + i * ROW_HEIGHT + ROW_HEIGHT / 2
-            port_id = workflow_param_port_id(param)
-            port = PortItem(self, workflow.uid, port_id, "out",
-                            param.get("type", "string"),
-                            param.get("displayName", param.get("name", "")))
+            port = PortItem(self, workflow.uid, entry["port"], "out",
+                            entry["ptype"], entry["label"])
+            port.setToolTip(entry["tooltip"])
             port.setPos(NODE_WIDTH, y)
-            self.ports[(port_id, "out")] = port
-            label = QGraphicsSimpleTextItem(param.get("displayName", param.get("name", "")), self)
-            label.setBrush(QBrush(QColor("#dddddd")))
+            self.ports[(entry["port"], "out")] = port
+            label = QGraphicsSimpleTextItem(entry["label"], self)
+            is_node_out = node_output_port_node_id(entry["port"]) is not None
+            label.setBrush(QBrush(QColor("#e8c88f" if is_node_out else "#dddddd")))
             label.setPos(NODE_WIDTH - 12 - label.boundingRect().width(), y - 7)
 
-        # Implicit Result port (rendered output) below the param outputs.
-        y = HEADER_HEIGHT + len(outputs) * ROW_HEIGHT + ROW_HEIGHT / 2
-        result_tip = "Result (rendered output)"
+        # Implicit Result port (rendered output) below the other outputs.
+        y = HEADER_HEIGHT + len(out_entries) * ROW_HEIGHT + ROW_HEIGHT / 2
+        result_type = result_port_type(workflow)
+        result_tip = f"Result (rendered output, {result_type})"
         if workflow.lastOutput:
             result_tip += f"\n{workflow.lastOutput}"
-        result_port = PortItem(self, workflow.uid, RESULT_PORT, "out", "result", "Result")
+        result_port = PortItem(self, workflow.uid, RESULT_PORT, "out", result_type, "Result")
         result_port.setToolTip(result_tip)
         result_port.setPos(NODE_WIDTH, y)
         self.ports[(RESULT_PORT, "out")] = result_port
@@ -215,6 +252,28 @@ class WorkflowNodeItem(QGraphicsRectItem):
             act.setChecked(bool(p.get("graphOutput")))
             out_actions[act] = p
 
+        # ComfyUI node outputs (discovered from the workflow file).
+        node_out_menu = menu.addMenu("Expose node output")
+        nodeout_actions = {}
+        exposed_ports = {e.get("port")
+                         for e in workflow.parameters.get("exposedNodeOutputs", [])}
+        try:
+            wf_json = self.editor.window.loadWorkflowJson(workflow.path)
+            node_infos = self.editor.window.extractWorkflowNodeOutputs(wf_json)
+        except Exception as e:
+            node_infos = []
+            node_out_menu.setEnabled(False)
+            node_out_menu.setTitle(f"Expose node output (unavailable: {e})")
+        for info in node_infos:
+            for slot in info["slots"]:
+                pid = node_output_port_id(info["node_id"], slot)
+                ptype = infer_node_output_type(wf_json, info["node_id"], slot)
+                text = f"{info['title']} [{info['node_id']}] out {slot} ({ptype})"
+                act = node_out_menu.addAction(text)
+                act.setCheckable(True)
+                act.setChecked(pid in exposed_ports)
+                nodeout_actions[act] = (pid, text, ptype)
+
         menu.addSeparator()
         toggle_enabled = menu.addAction("Disable" if workflow.enabled else "Enable")
         disconnect_all = menu.addAction("Disconnect all")
@@ -224,6 +283,9 @@ class WorkflowNodeItem(QGraphicsRectItem):
             self.editor.togglePortFlag(workflow, in_actions[chosen], "graphInput")
         elif chosen in out_actions:
             self.editor.togglePortFlag(workflow, out_actions[chosen], "graphOutput")
+        elif chosen in nodeout_actions:
+            pid, text, ptype = nodeout_actions[chosen]
+            self.editor.toggleNodeOutputExposure(workflow, pid, text, ptype)
         elif chosen == toggle_enabled:
             workflow.enabled = not workflow.enabled
             self.editor.markModified()
@@ -272,7 +334,8 @@ class ShotGraphView(QGraphicsView):
             if port is not None:
                 self._drag_src_port = port
                 self._temp_edge = QGraphicsPathItem()
-                self._temp_edge.setPen(QPen(QColor("#dddddd"), 2, Qt.PenStyle.DashLine))
+                self._temp_edge.setPen(QPen(QColor(color_for_type(port.ptype)), 2,
+                                            Qt.PenStyle.DashLine))
                 self._temp_edge.setZValue(3)
                 self.scene().addItem(self._temp_edge)
                 self._updateTempEdge(event.pos())
@@ -510,6 +573,10 @@ class ShotNodeEditorWidget(QWidget):
         if src.wf_uid == dst.wf_uid:
             self.statusMessage("Cannot connect a workflow to itself.")
             return
+        if not types_compatible(src.ptype, dst.ptype):
+            self.statusMessage(
+                f"Connection refused: type mismatch ({src.ptype} → {dst.ptype}).")
+            return
         if self._wouldCreateCycle(shot, src.wf_uid, dst.wf_uid):
             self.statusMessage("Connection refused: it would create a cycle.")
             return
@@ -567,6 +634,25 @@ class ShotNodeEditorWidget(QWidget):
                     c for c in connections
                     if not (c.get(direction_key, {}).get("wf") == workflow.uid
                             and c.get(direction_key, {}).get("port") == port)
+                ]
+        self.markModified()
+        self.refresh()
+
+    def toggleNodeOutputExposure(self, workflow, port_id, label, ptype="*"):
+        """Exposes/unexposes a ComfyUI node output as a graph output port."""
+        exposures = workflow.parameters.setdefault("exposedNodeOutputs", [])
+        existing = next((e for e in exposures if e.get("port") == port_id), None)
+        if existing is None:
+            exposures.append({"port": port_id, "label": label, "type": ptype})
+        else:
+            exposures.remove(existing)
+            # Connections from a removed port are meaningless.
+            shot = self.currentShot()
+            if shot is not None:
+                shot.graph["connections"] = [
+                    c for c in shot.graph.get("connections", [])
+                    if not (c.get("from", {}).get("wf") == workflow.uid
+                            and c.get("from", {}).get("port") == port_id)
                 ]
         self.markModified()
         self.refresh()
