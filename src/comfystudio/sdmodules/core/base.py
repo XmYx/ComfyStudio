@@ -115,10 +115,14 @@ class ComfyStudioBase:
     def newProject(self):
         self.shots.clear()
         self.currentShotIndex = -1
+         self.currentFilePath = None
 
         self.updateList()
         self.clearDock()
+        if hasattr(self, "listWidgetBase") and hasattr(self.listWidgetBase, "clearTimeline"):
+            self.listWidgetBase.clearTimeline()
         self.status_widgets["statusMessage"].setText("New project created.")
+        self.setProjectModified(False)
 
     def openProject(self):
         filePath, _ = QFileDialog.getOpenFileName(
@@ -128,22 +132,8 @@ class ComfyStudioBase:
             "JSON Files (*.json);;All Files (*)"
         )
         if filePath:
-            try:
-                with open(filePath, "r") as f:
-                    project_data = json.load(f)
-                shots_data = project_data.get("shots", [])
-                self.shots = [Shot.from_dict(shot_dict) for shot_dict in shots_data]
-                self.updateList()
-                self.currentFilePath = filePath
-                self.status_widgets["statusMessage"].setText(
-                    f"{self.localization.translate('status_loaded_from', default='Project loaded from')} {filePath}")
-                self.fillDock()
-                self.addToRecents(filePath)
-                self.setProjectModified(False)
-            except Exception as e:
-                QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
-                                    self.localization.translate("error_failed_to_load_project",
-                                                                default=f"Failed to load project: {e}"))
+            # Single code path for loading a project (handles timeline restore, selection, recents).
+            self.openProjectFromPath(filePath)
     def isProjectModified(self):
         # Implement logic to check if the project has been modified.
         # This could involve setting a flag whenever shots or workflows are changed.
@@ -189,6 +179,157 @@ class ComfyStudioBase:
             return
         self.addWorkflowToShot(path, isVideo=True)
 
+    def loadWorkflowJson(self, workflow_path):
+        """
+        Loads and validates a ComfyUI workflow JSON file (API format).
+        Raises ValueError with a user-friendly message when the file is missing,
+        malformed, or saved in the UI (non-API) export format.
+        """
+        if not workflow_path or not os.path.isfile(workflow_path):
+            raise ValueError(f"Workflow file not found:\n{workflow_path}")
+        try:
+            with open(workflow_path, "r", encoding="utf-8") as f:
+                workflow_json = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Workflow file is not valid JSON:\n{workflow_path}\n\n{e}")
+        if not isinstance(workflow_json, dict) or not workflow_json:
+            raise ValueError(f"Workflow file has an unexpected structure:\n{workflow_path}")
+        # UI-format exports have "nodes"/"links" lists instead of node-id keyed dicts.
+        if isinstance(workflow_json.get("nodes"), list):
+            raise ValueError(
+                f"'{os.path.basename(workflow_path)}' appears to be saved in ComfyUI's UI format.\n\n"
+                "Please re-export it from ComfyUI using 'Save (API Format)' "
+                "(enable Dev mode options in ComfyUI settings) and try again."
+            )
+        # Sanity-check that at least one entry looks like an API-format node.
+        has_valid_node = any(
+            isinstance(nd, dict) and isinstance(nd.get("inputs", {}), dict)
+            for nd in workflow_json.values()
+        )
+        if not has_valid_node:
+            raise ValueError(
+                f"No valid nodes with inputs found in workflow:\n{workflow_path}\n"
+                "Expected a ComfyUI API-format workflow."
+            )
+        return workflow_json
+
+    def extractWorkflowParams(self, workflow_json, workflow_path):
+        """
+        Discovers the editable local inputs ("locals") of an API-format workflow.
+        Node-to-node connections (list/tuple values) are skipped — only literal
+        int/float/bool/string values are exposed as parameters.
+        """
+        params_to_expose = []
+        for node_id, node_data in workflow_json.items():
+            if not isinstance(node_data, dict):
+                continue
+            inputs = node_data.get("inputs", {})
+            if not isinstance(inputs, dict):
+                continue
+            meta = node_data.get("_meta", {})
+            node_meta_title = ""
+            if isinstance(meta, dict):
+                node_meta_title = meta.get("title", "")
+            if not node_meta_title:
+                node_meta_title = node_data.get("class_type", "")
+            for key, value in inputs.items():
+                # Skip links to other nodes ([node_id, slot]) and nested structures:
+                # they are connections, not user-settable values.
+                if isinstance(value, (list, tuple, dict)):
+                    continue
+                if isinstance(value, bool):
+                    ptype = "bool"
+                elif isinstance(value, int):
+                    ptype = "int"
+                elif isinstance(value, float):
+                    ptype = "float"
+                else:
+                    ptype = "string"
+                    value = "" if value is None else str(value)
+
+                # Load visibility state from settings, keyed by node_id + param name
+                param_visibility = self.getParamVisibility(workflow_path, node_id, key)
+
+                params_to_expose.append({
+                    "name": key,
+                    "type": ptype,
+                    "value": value,
+                    "nodeIDs": [str(node_id)],
+                    "displayName": key,
+                    "visible": param_visibility,
+                    "nodeMetaTitle": node_meta_title,
+                })
+        return params_to_expose
+
+    def syncWorkflowFromFile(self, workflow_path):
+        """
+        Re-reads a workflow file and updates the parameters of every shot
+        workflow assignment that uses it. Values saved in the file win; UI state
+        (visibility, display names) and dynamic overrides are preserved.
+        Called after the embedded ComfyUI editor saves, or on external edits.
+        """
+        try:
+            wf_json = self.loadWorkflowJson(workflow_path)
+        except ValueError as e:
+            logging.warning(f"Cannot sync workflow '{workflow_path}': {e}")
+            return False
+        fresh_params = self.extractWorkflowParams(wf_json, workflow_path)
+
+        target = os.path.abspath(workflow_path)
+        changed_any = False
+        for shot in self.shots:
+            for wf in shot.workflows:
+                if os.path.abspath(wf.path) != target:
+                    continue
+                old_params = wf.parameters.get("params", [])
+                old_by_key = {}
+                for p in old_params:
+                    old_by_key[(p.get("name"), tuple(p.get("nodeIDs", [])))] = p
+
+                merged = []
+                for new_param in copy.deepcopy(fresh_params):
+                    key = (new_param["name"], tuple(new_param["nodeIDs"]))
+                    old = old_by_key.get(key)
+                    if old:
+                        # Keep UI state and dynamic-override configuration.
+                        new_param["visible"] = old.get("visible", new_param["visible"])
+                        new_param["displayName"] = old.get("displayName", new_param["displayName"])
+                        for flag in ("usePrevResultImage", "usePrevResultVideo", "useApiImage"):
+                            if old.get(flag):
+                                new_param[flag] = old[flag]
+                        if "dynamicOverrides" in old:
+                            new_param["dynamicOverrides"] = copy.deepcopy(old["dynamicOverrides"])
+                            # Dynamic params hold a placeholder/runtime value, not
+                            # a literal from the file — keep the existing one.
+                            new_param["value"] = old.get("value", new_param["value"])
+                        if old.get("expression"):
+                            new_param["expression"] = old["expression"]
+                        if old.get("global_var"):
+                            new_param["global_var"] = old["global_var"]
+                    merged.append(new_param)
+                wf.parameters["params"] = merged
+                changed_any = True
+
+        if changed_any:
+            self.setProjectModified(True)
+            # Refresh the dock without pushing the workflow back into the
+            # embedded editor (that would clobber the canvas state there).
+            self._syncingWorkflow = True
+            try:
+                if 0 <= self.currentShotIndex < len(self.shots):
+                    shot = self.shots[self.currentShotIndex]
+                    self.refreshWorkflowsList(shot)
+                    self.refreshParamsList(shot)
+                    current_item = self.workflowListWidget.currentItem()
+                    if current_item:
+                        self.onWorkflowItemClicked(current_item)
+            finally:
+                self._syncingWorkflow = False
+            self.status_widgets["statusMessage"].setText(
+                f"Parameters updated from '{os.path.basename(workflow_path)}'."
+            )
+        return changed_any
+
     def addWorkflowToShot(self, workflow_path, isVideo=False):
         """
         Adds a new workflow to the currently selected shot, loading any default
@@ -201,32 +342,8 @@ class ComfyStudioBase:
         shot = self.shots[self.currentShotIndex]
 
         try:
-            # Load the workflow JSON
-            with open(workflow_path, "r") as f:
-                workflow_json = json.load(f)
-
-            # Create a list of params to expose
-            params_to_expose = []
-            for node_id, node_data in workflow_json.items():
-                inputs = node_data.get("inputs", {})
-                node_meta_title = node_data.get("_meta", {}).get("title", "")  # <--- get the node's _meta.title
-                for key, value in inputs.items():
-                    ptype = type(value).__name__
-                    if ptype not in ["int", "float"]:
-                        ptype = "string"
-
-                    # Load visibility state from settings, keyed by node_id + param name
-                    param_visibility = self.getParamVisibility(workflow_path, node_id, key)
-
-                    params_to_expose.append({
-                        "name": key,
-                        "type": ptype,
-                        "value": value,
-                        "nodeIDs": [node_id],
-                        "displayName": key,
-                        "visible": param_visibility,
-                        "nodeMetaTitle": node_meta_title,
-                    })
+            workflow_json = self.loadWorkflowJson(workflow_path)
+            params_to_expose = self.extractWorkflowParams(workflow_json, workflow_path)
 
             new_workflow = WorkflowAssignment(
                 path=workflow_path,
@@ -267,8 +384,12 @@ class ComfyStudioBase:
             # Attach the new workflow and refresh
             shot.workflows.append(new_workflow)
             self.refreshWorkflowsList(shot)
-            # QMessageBox.information(self, "Info", "Workflow added to the shot.")
+            self.refreshParamsList(shot)
+            self._watchWorkflowFile(workflow_path)
+            self.setProjectModified(True)
 
+        except ValueError as e:
+            QMessageBox.warning(self, "Error", str(e))
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
     def loadWorkflowDefaults(self, workflow_path):
@@ -281,6 +402,16 @@ class ComfyStudioBase:
             return
 
         self.workflowParamsGroup.setEnabled(True)
+
+        # Mirror the selection into the embedded ComfyUI editor when it's shown.
+        # Skip when the same file is already open there (preserves unsaved edits)
+        # or when this refresh was itself triggered by a save-back sync.
+        if (getattr(self, "webBrowserDock", None) is not None
+                and self.webBrowserDock.isVisible()
+                and not getattr(self, "_syncingWorkflow", False)):
+            bridge = getattr(self, "workflowEditBridge", None)
+            if bridge is None or bridge.target() != workflow.path:
+                self.loadWorkflowInBrowser(workflow)
 
         # If you need to send signals:
         if self.currentShotIndex >= 0 and self.currentShotIndex < len(self.shots):
@@ -299,12 +430,18 @@ class ComfyStudioBase:
 
         params_list = workflow.parameters.get("params", [])
 
+        # When no parameter is marked visible, show all of them instead of an
+        # empty editor (freshly imported workflows start with everything hidden).
+        show_all = self.showHiddenParams or not any(
+            p.get("visible", True) for p in params_list
+        )
+
         # 1) Group by node_id (or use nodeMetaTitle as key if you prefer).
         #    We'll store data in a dict: node_id -> { "title": ..., "params": [] }
         node_map = {}
         for param in params_list:
             # Skip if invisible and user isn't showing hidden
-            if not param.get("visible", True) and not self.showHiddenParams:
+            if not param.get("visible", True) and not show_all:
                 continue
 
             # For each node in param["nodeIDs"], group them
@@ -622,15 +759,26 @@ class ComfyStudioBase:
         if ptype == "int":
             w = QSpinBox()
             w.setRange(-2147483648, 2147483647)
-            w.setValue(min(int(pval), 2147483647))
+            try:
+                w.setValue(max(-2147483648, min(int(pval), 2147483647)))
+            except (TypeError, ValueError):
+                w.setValue(0)
             w.valueChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
             return w
         elif ptype == "float":
             w = QDoubleSpinBox()
             w.setRange(-1e12, 1e12)
             w.setDecimals(6)
-            w.setValue(pval)
+            try:
+                w.setValue(float(pval))
+            except (TypeError, ValueError):
+                w.setValue(0.0)
             w.valueChanged.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, v))
+            return w
+        elif ptype == "bool":
+            w = QCheckBox()
+            w.setChecked(bool(pval) and str(pval).lower() not in ("false", "0", ""))
+            w.toggled.connect(lambda v, p=param: self.onWorkflowParamChanged(None, p, bool(v)))
             return w
         else:
             w = ImagePreviewLineEdit()
@@ -648,11 +796,23 @@ class ComfyStudioBase:
             return
         menu = QMenu(self)
         enableAction = menu.addAction("Toggle Enabled")
+        editInComfyAction = menu.addAction("Edit in ComfyUI")
         action = menu.exec(self.workflowListWidget.mapToGlobal(pos))
+        workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
         if action == enableAction:
-            workflow: WorkflowAssignment = item.data(Qt.ItemDataRole.UserRole)
             workflow.enabled = not workflow.enabled
             self.refreshWorkflowsList(self.shots[self.currentShotIndex])
+        elif action == editInComfyAction:
+            if getattr(self, "webBrowserDock", None) is not None:
+                self.webBrowserDock.setVisible(True)
+                if hasattr(self, "toggleWebBrowserAct"):
+                    self.toggleWebBrowserAct.setChecked(True)
+                self.loadWorkflowInBrowser(workflow)
+            else:
+                QMessageBox.information(
+                    self, "Web Browser Unavailable",
+                    "The embedded browser requires PyQt6-WebEngine, which is not installed."
+                )
     def removeWorkflowFromShot(self):
         if self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
             QMessageBox.warning(self, "Warning", "No shot selected.")

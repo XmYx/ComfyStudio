@@ -50,6 +50,7 @@ Usage in your MainWindow:
             # ... further initialization ...
 """
 
+import os
 import sys
 import json
 import cv2
@@ -137,21 +138,21 @@ class FrameReadoutLabel(QtWidgets.QLabel):
     def updateText(self):
         self.setText(f"Time: {self.timeline_widget.playhead:.2f}s")
 
-    def mousePressEvent(self, event):
-        new_playhead = event.x() / self.timeline_widget.scale
-        self.timeline_widget.playhead = max(0.0, new_playhead)
-        self.timeline_widget.playheadChanged.emit(self.timeline_widget.playhead)
-        self.timeline_widget.update()
+    def _setPlayheadFromEvent(self, event):
+        # The label starts at left_panel_width, so translate into widget coords first.
+        tw = self.timeline_widget
+        new_playhead = tw.xToTime(event.pos().x() + tw.left_panel_width)
+        tw.playhead = max(0.0, new_playhead)
+        tw.playheadChanged.emit(tw.playhead)
+        tw.update()
         self.updateText()
         event.accept()
 
+    def mousePressEvent(self, event):
+        self._setPlayheadFromEvent(event)
+
     def mouseMoveEvent(self, event):
-        new_playhead = event.x() / self.timeline_widget.scale
-        self.timeline_widget.playhead = max(0.0, new_playhead)
-        self.timeline_widget.playheadChanged.emit(self.timeline_widget.playhead)
-        self.timeline_widget.update()
-        self.updateText()
-        event.accept()
+        self._setPlayheadFromEvent(event)
 
 ########################################################################
 # ShotListView: The Shot Library (grid view)
@@ -180,19 +181,23 @@ class ShotListView(QListWidget):
 
     def mimeData(self, items):
         mimeData = QtCore.QMimeData()
+        main_win = self.mainWin or QtWidgets.QApplication.activeWindow()
         shots = []
         for item in items:
             shot_idx = item.data(Qt.ItemDataRole.UserRole)
-            shot = QtWidgets.QApplication.activeWindow().shots[shot_idx]
+            if not isinstance(shot_idx, int) or not (0 <= shot_idx < len(getattr(main_win, "shots", []))):
+                continue
+            shot = main_win.shots[shot_idx]
             shots.append({
                 "name": shot.name,
-                "duration": shot.duration,
+                "duration": shot.raw_duration,
                 "videoPath": shot.videoPath,
                 "stillPath": shot.stillPath,
                 "thumbnail_path": shot.thumbnail_path,
                 "inPoint": shot.inPoint,
                 "outPoint": shot.outPoint,
                 "linkedAudio": shot.linkedAudio,
+                "fps": shot.fps,
             })
         mimeData.setData("application/x-shot", json.dumps(shots).encode("utf-8"))
         return mimeData
@@ -266,13 +271,15 @@ class ShotListView(QListWidget):
             if item == self.currentHoverItem and item_id in self.hoverFraction:
                 frac = self.hoverFraction[item_id]
                 shot_idx = item.data(Qt.ItemDataRole.UserRole)
-                shot = self.mainWin.shots[shot_idx]
-                frame_pix = getVideoFrame(shot.videoPath, frac, self.iconSize())
-                iconSize = self.iconSize()
-                icon_x = rect.x() + (rect.width() - iconSize.width()) // 2
-                icon_y = rect.y() + (rect.height() - iconSize.height()) // 2
-                icon_rect = QRect(icon_x, icon_y, iconSize.width(), iconSize.height())
-                painter.drawPixmap(icon_rect, frame_pix)
+                if isinstance(shot_idx, int) and 0 <= shot_idx < len(self.mainWin.shots):
+                    shot = self.mainWin.shots[shot_idx]
+                    if shot.videoPath:
+                        frame_pix = getVideoFrame(shot.videoPath, frac, self.iconSize())
+                        iconSize = self.iconSize()
+                        icon_x = rect.x() + (rect.width() - iconSize.width()) // 2
+                        icon_y = rect.y() + (rect.height() - iconSize.height()) // 2
+                        icon_rect = QRect(icon_x, icon_y, iconSize.width(), iconSize.height())
+                        painter.drawPixmap(icon_rect, frame_pix)
             if item == self.currentHoverItem and item_id in self.hoverFraction:
                 frac = self.hoverFraction[item_id]
                 x = rect.x() + int(frac * rect.width())
@@ -472,6 +479,7 @@ class MultiTrackTimelineWidget(QWidget):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.scale = 100.0  # pixels per second
+        self.time_offset = 0.0  # leftmost visible time (seconds) for panning/zooming
         self.playhead = 0.0  # in seconds
         self.timeline_clips: List[TimelineClip] = []
         # Maintain separate video and audio tracks (for ordering)
@@ -534,15 +542,17 @@ class MultiTrackTimelineWidget(QWidget):
         self.navigator.setGeometry(0, self.height() - 40, self.width(), 40)
         self.navigator.rangeChanged.connect(self.onNavigatorRangeChanged)
 
-        # self.rangeSelector = RangeSelectorWidget(self)
-        # self.rangeSelector.setGeometry(self.left_panel_width, 0, self.width() - self.left_panel_width, 30)
-        # self.rangeSelector.rangeChanged.connect(self.setWorkArea)
-        # Adjust positions of existing widgets:
-        self.frameReadoutLabel.setGeometry(self.left_panel_width, 30, self.width() - self.left_panel_width,
-                                           self.ruler_height)
-        self.navigator.setGeometry(0, self.height() - 40, self.width(), 40)
+        # Keep the readout label in sync with playback/dragging.
+        self.playheadChanged.connect(lambda _t: self.frameReadoutLabel.updateText())
 
         print("[DEBUG] MultiTrackTimelineWidget initialized")
+
+    # --- Time <-> pixel mapping (accounts for zoom scale and pan offset) ---
+    def timeToX(self, t: float) -> int:
+        return self.left_panel_width + int(round((t - self.time_offset) * self.scale))
+
+    def xToTime(self, x: float) -> float:
+        return self.time_offset + (x - self.left_panel_width) / self.scale
 
     def setWorkArea(self, start: float, end: float):
         self.work_area_start = start
@@ -550,12 +560,29 @@ class MultiTrackTimelineWidget(QWidget):
         self.update()
 
     def onNavigatorRangeChanged(self, start, end):
-        self.work_area_start = start
-        self.work_area_end = end
-        full_length = self.timeline_end if self.timeline_end > 0 else 100.0
+        # The navigator selects the visible time range: pan + zoom.
         if (end - start) > 0:
-            self.scale = (self.width() - self.left_panel_width) / (end - start)
+            self.scale = max(1.0, (self.width() - self.left_panel_width) / (end - start))
+            self.time_offset = max(0.0, start)
         self.update()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Zoom around the cursor position so the time under the mouse stays put.
+            pos_x = event.position().x() if hasattr(event, "position") else event.pos().x()
+            anchor_time = self.xToTime(pos_x)
+            factor = 1.15 if delta > 0 else (1 / 1.15)
+            self.scale = max(2.0, min(self.scale * factor, 2000.0))
+            self.time_offset = max(0.0, anchor_time - (pos_x - self.left_panel_width) / self.scale)
+            self.update()
+            event.accept()
+        else:
+            # Plain wheel pans the timeline horizontally.
+            pan_seconds = (-delta / 120.0) * (100.0 / self.scale)
+            self.time_offset = max(0.0, self.time_offset + pan_seconds)
+            self.update()
+            event.accept()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -569,17 +596,21 @@ class MultiTrackTimelineWidget(QWidget):
         except ValueError:
             track_index = 0
         # Use clip.length directly for width
-        x = self.left_panel_width + int(clip.start_time * self.scale)
+        x = self.timeToX(clip.start_time)
         y = self.ruler_height + track_index * self.track_height + 5
-        width = int(clip.length * self.scale)
+        width = max(1, int(clip.length * self.scale))
         height = self.track_height - 10
         return QRect(x, y, width, height)
 
     def snapValue(self, value, snap_list, threshold=10):
+        best = value
+        best_dist = threshold
         for snap_val in snap_list:
-            if abs(value - snap_val) < threshold:
-                return snap_val
-        return value
+            dist = abs(value - snap_val)
+            if dist < best_dist:
+                best = snap_val
+                best_dist = dist
+        return best
 
     def updateTracks(self):
         self.tracks = self.video_tracks + self.audio_tracks
@@ -607,28 +638,40 @@ class MultiTrackTimelineWidget(QWidget):
         original_length = clip.length
         if split_time <= original_start or split_time >= original_start + original_length:
             return
-        left_length = split_time - original_start
-        right_length = (original_start + original_length) - split_time
-        left_inPoint = clip.shot.inPoint
-        left_outPoint = left_inPoint + (left_length / clip.shot.duration)
-        right_inPoint = left_outPoint
-        right_outPoint = clip.shot.outPoint
-        left_clip = TimelineClip(shot=clip.shot, track=clip.track, start_time=original_start, length=left_length)
-        left_clip.shot.inPoint = left_inPoint
-        left_clip.shot.outPoint = left_outPoint
-        right_clip = TimelineClip(shot=clip.shot, track=clip.track, start_time=split_time, length=right_length)
-        right_clip.shot.inPoint = right_inPoint
-        right_clip.shot.outPoint = right_outPoint
-        if clip in self.timeline_clips:
-            self.timeline_clips.remove(clip)
-        self.timeline_clips.append(left_clip)
-        self.timeline_clips.append(right_clip)
-        print(f"[DEBUG] Split clip '{clip.shot.name}' at {split_time}s into two clips")
-        if clip.shot.linkedAudio:
-            for other in self.timeline_clips.copy():
-                if other.shot == clip.shot and other.track.lower() != clip.track.lower():
-                    self.splitClip(other, split_time)
-                    break
+        # Linked clips (e.g. the audio counterpart) share the same Shot object;
+        # collect them by identity BEFORE mutating anything.
+        group = [clip] + [c for c in self.timeline_clips
+                          if c is not clip and c.shot is clip.shot and clip.shot.linkedAudio]
+
+        shot = clip.shot
+        src_span = shot.outPoint - shot.inPoint
+        split_frac = shot.inPoint + src_span * ((split_time - original_start) / original_length)
+
+        # The right-hand halves get their own Shot copy so the two halves can be
+        # trimmed independently; linked halves share the same copy to stay linked.
+        right_shot = copy.deepcopy(shot)
+        right_shot.inPoint = split_frac
+        right_shot.outPoint = shot.outPoint
+        shot.outPoint = split_frac  # left halves keep the original shot, trimmed
+
+        for member in group:
+            if member not in self.timeline_clips:
+                continue
+            m_start = member.start_time
+            m_len = member.length
+            m_split = split_time
+            if not (m_start < m_split < m_start + m_len):
+                continue
+            left_length = m_split - m_start
+            right_length = (m_start + m_len) - m_split
+            left_clip = TimelineClip(shot=shot, track=member.track, start_time=m_start, length=left_length)
+            right_clip = TimelineClip(shot=right_shot, track=member.track, start_time=m_split, length=right_length)
+            self.timeline_clips.remove(member)
+            if member in self.selectedClips:
+                self.selectedClips.remove(member)
+            self.timeline_clips.append(left_clip)
+            self.timeline_clips.append(right_clip)
+        print(f"[DEBUG] Split clip '{shot.name}' at {split_time}s")
 
     def handleOverlap(self, new_clip: TimelineClip):
         for clip in self.timeline_clips.copy():
@@ -643,7 +686,8 @@ class MultiTrackTimelineWidget(QWidget):
                     if existing_start < new_start < existing_end:
                         new_length = new_start - existing_start
                         clip.length = new_length
-                        clip.shot.outPoint = clip.shot.inPoint + (new_length / clip.shot.duration)
+                        if clip.shot.raw_duration > 0:
+                            clip.shot.outPoint = min(1.0, clip.shot.inPoint + (new_length / clip.shot.raw_duration))
                         print(f"[DEBUG] Overlap: Trimmed clip '{clip.shot.name}' to new length {new_length}s")
                         if new_length < 0.1:
                             self.timeline_clips.remove(clip)
@@ -652,11 +696,13 @@ class MultiTrackTimelineWidget(QWidget):
                         print(f"[DEBUG] Overlap: Removed clip '{clip.shot.name}' due to overlap with new clip")
 
     def updateTimelineRange(self):
+        old_end = self.timeline_end
         if self.timeline_clips:
             self.timeline_end = max(clip.start_time + clip.length for clip in self.timeline_clips)
         else:
             self.timeline_end = 0.0
-        if self.work_area_end == 0.0:
+        # Keep the auto work area tracking the timeline end unless the user changed it.
+        if self.work_area_end == 0.0 or abs(self.work_area_end - old_end) < 1e-6:
             self.work_area_end = self.timeline_end
 
     def startPlayback(self):
@@ -706,6 +752,7 @@ class MultiTrackTimelineWidget(QWidget):
                         self.timeline_clips.remove(clip)
                 print("[DEBUG] Deleted selected clips")
                 self.selectedClips = []
+                self.updateTimelineRange()
                 self.update()
         elif event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
             self.clipboard = [copy.deepcopy(clip) for clip in self.selectedClips]
@@ -721,6 +768,7 @@ class MultiTrackTimelineWidget(QWidget):
                     new_clips.append(new_clip)
                 self.timeline_clips.extend(new_clips)
                 print("[DEBUG] Pasted clips at playhead")
+                self.updateTimelineRange()
                 self.update()
         elif event.key() == Qt.Key.Key_P:
             main_win = QtWidgets.QApplication.activeWindow()
@@ -733,8 +781,64 @@ class MultiTrackTimelineWidget(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def contextMenuEvent(self, event):
+        """Right-click on a track label: hide/show video tracks, mute/solo/level audio."""
+        pos = event.pos()
+        if pos.x() >= self.left_panel_width or pos.y() < self.ruler_height:
+            super().contextMenuEvent(event)
+            return
+        track_index = int((pos.y() - self.ruler_height) // self.track_height)
+        if not (0 <= track_index < len(self.tracks)):
+            return
+        track = self.tracks[track_index]
+        ts = self.track_settings.setdefault(track, {})
+        menu = QMenu(self)
+        if track.lower().startswith("video"):
+            visible = ts.get("visible", True)
+            toggleAct = menu.addAction("Hide Track" if visible else "Show Track")
+            chosen = menu.exec(event.globalPos())
+            if chosen == toggleAct:
+                ts["visible"] = not visible
+        else:
+            mute = ts.get("mute", False)
+            solo = ts.get("solo", False)
+            muteAct = menu.addAction("Unmute" if mute else "Mute")
+            soloAct = menu.addAction("Unsolo" if solo else "Solo")
+            levelAct = menu.addAction("Set Level...")
+            chosen = menu.exec(event.globalPos())
+            if chosen == muteAct:
+                ts["mute"] = not mute
+            elif chosen == soloAct:
+                ts["solo"] = not solo
+            elif chosen == levelAct:
+                val, ok = QtWidgets.QInputDialog.getDouble(
+                    self, "Track Level", f"Level for {track}:",
+                    ts.get("level", 1.0), 0.0, 2.0, 2
+                )
+                if ok:
+                    ts["level"] = val
+        self.update()
+
     def mousePressEvent(self, event):
         pos = event.pos()
+        # Clicking in the ruler area starts dragging the playhead.
+        if pos.y() < self.ruler_height and pos.x() >= self.left_panel_width:
+            self.dragging_playhead = True
+            self.playhead = max(0.0, self.xToTime(pos.x()))
+            self.playheadChanged.emit(self.playhead)
+            self.update()
+            return
+        if self.toolMode == "blade":
+            # Blade splits at the click position.
+            for clip in reversed(self.timeline_clips):
+                if self.clipRect(clip).contains(pos):
+                    self.splitClip(clip, self.xToTime(pos.x()))
+                    self.activeClip = None
+                    self.updateTimelineRange()
+                    self.update()
+                    return
+            super().mousePressEvent(event)
+            return
         # Check if click is on a resize handle first
         handle_zone = 10
         for clip in reversed(self.timeline_clips):
@@ -796,26 +900,8 @@ class MultiTrackTimelineWidget(QWidget):
                 self.rubberBand.setGeometry(QRect(pos, QSize()))
                 self.rubberBand.show()
                 self.activeClip = None
-        elif self.toolMode == "blade":
-            clicked_clip = None
-            for clip in reversed(self.timeline_clips):
-                if self.clipRect(clip).contains(pos):
-                    clicked_clip = clip
-                    break
-            if clicked_clip:
-                clip_start = clicked_clip.start_time
-                clip_end = clicked_clip.start_time + clicked_clip.length
-                if clip_start < self.playhead < clip_end:
-                    self.splitClip(clicked_clip, self.playhead)
-                    self.activeClip = None
-                    self.update()
-                    return
-            else:
-                super().mousePressEvent(event)
-                return
         else:
             super().mousePressEvent(event)
-        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -842,51 +928,60 @@ class MultiTrackTimelineWidget(QWidget):
         if self.activeClip:
             if self.activeClipAction == "move":
                 if len(self.selectedClips) > 1:
+                    # Move the whole selection, preserving relative offsets, without
+                    # letting any member go below t=0.
+                    deltas = []
                     for clip in self.selectedClips:
                         orig_start, _ = self.activeClipOriginalPositions[id(clip)]
                         new_left = event.pos().x() - self.activeClipOffsets[id(clip)]
-                        new_start_time = (new_left - self.left_panel_width) / self.scale
-                        clip.start_time = max(0.0, new_start_time)
+                        deltas.append(self.xToTime(new_left) - orig_start)
+                    delta = deltas[0] if deltas else 0.0
+                    min_start = min(self.activeClipOriginalPositions[id(c)][0] for c in self.selectedClips)
+                    delta = max(delta, -min_start)
+                    for clip in self.selectedClips:
+                        orig_start, _ = self.activeClipOriginalPositions[id(clip)]
+                        clip.start_time = orig_start + delta
                 else:
                     new_left = event.pos().x() - self.activeClipOffset
-                    new_start_time = (new_left - self.left_panel_width) / self.scale
-                    other_edges = []
+                    # Snap to other clip edges on the same track and to the playhead.
+                    snap_targets = [self.timeToX(self.playhead)]
                     for c in self.timeline_clips:
-                        if c != self.activeClip and c.track.lower() == self.activeClip.track.lower():
-                            other_edges.append(self.left_panel_width + int(c.start_time * self.scale))
-                            other_edges.append(self.left_panel_width + int((c.start_time + c.length) * self.scale))
-                    new_left_pix = self.snapValue(new_left, other_edges)
-                    new_start_time = (new_left_pix - self.left_panel_width) / self.scale
-                    self.activeClip.start_time = max(0.0, new_start_time)
-                print(f"[DEBUG] Moving clip(s) to start_time: {new_start_time}s")
+                        if c is not self.activeClip and c.track.lower() == self.activeClip.track.lower():
+                            snap_targets.append(self.timeToX(c.start_time))
+                            snap_targets.append(self.timeToX(c.start_time + c.length))
+                    new_left_pix = self.snapValue(new_left, snap_targets)
+                    self.activeClip.start_time = max(0.0, self.xToTime(new_left_pix))
             elif self.activeClipAction == "resize_left":
-                new_left = event.pos().x()
-                new_start_time = (new_left - self.left_panel_width) / self.scale
+                new_start_time = self.xToTime(event.pos().x())
                 min_effective = 1.0 / self.fps
+                shot = self.activeClip.shot
+                # Can't reveal media before the source start: available head = inPoint * raw.
+                max_head = shot.inPoint * shot.raw_duration
+                new_start_time = max(new_start_time, self.activeClipOriginalStart - max_head, 0.0)
                 if self.activeClipOriginalEnd - new_start_time < min_effective:
                     new_start_time = self.activeClipOriginalEnd - min_effective
                 self.activeClip.start_time = new_start_time
                 self.activeClip.length = self.activeClipOriginalEnd - new_start_time
-                new_inPoint = self.activeClip.shot.outPoint - (self.activeClip.length / self.activeClip.shot.duration)
-                self.activeClip.shot.inPoint = max(0.0, new_inPoint)
-                print(
-                    f"[DEBUG] Resizing left clip '{self.activeClip.shot.name}': new start_time {new_start_time}s, new inPoint {self.activeClip.shot.inPoint}")
+                if shot.raw_duration > 0:
+                    shot.inPoint = min(max(0.0, shot.outPoint - (self.activeClip.length / shot.raw_duration)),
+                                       shot.outPoint - (min_effective / shot.raw_duration))
             elif self.activeClipAction == "resize_right":
-                new_right = event.pos().x()
-                new_end_time = (new_right - self.left_panel_width) / self.scale
+                new_end_time = self.xToTime(event.pos().x())
                 min_effective = 1.0 / self.fps
+                shot = self.activeClip.shot
+                # Can't extend past the source end: available tail = (1 - inPoint) * raw.
+                if shot.raw_duration > 0:
+                    max_len = (1.0 - shot.inPoint) * shot.raw_duration
+                    new_end_time = min(new_end_time, self.activeClipOriginalStart + max_len)
                 if new_end_time - self.activeClipOriginalStart < min_effective:
                     new_end_time = self.activeClipOriginalStart + min_effective
                 self.activeClip.length = new_end_time - self.activeClipOriginalStart
-                new_outPoint = self.activeClip.shot.inPoint + (self.activeClip.length / self.activeClip.shot.duration)
-                self.activeClip.shot.outPoint = min(1.0, max(new_outPoint, self.activeClip.shot.inPoint + 0.01))
-                print(
-                    f"[DEBUG] Resizing right clip '{self.activeClip.shot.name}': new end_time {new_end_time}s, new outPoint {self.activeClip.shot.outPoint}")
+                if shot.raw_duration > 0:
+                    new_outPoint = shot.inPoint + (self.activeClip.length / shot.raw_duration)
+                    shot.outPoint = min(1.0, max(new_outPoint, shot.inPoint + (min_effective / shot.raw_duration)))
             self.update()
         elif self.dragging_playhead:
-            new_playhead = (pos.x() - self.left_panel_width) / self.scale
-            self.playhead = max(0.0, new_playhead)
-            print(f"[DEBUG] Playhead moved to: {self.playhead}s")
+            self.playhead = max(0.0, self.xToTime(pos.x()))
             self.playheadChanged.emit(self.playhead)
             self.update()
         super().mouseMoveEvent(event)
@@ -908,6 +1003,8 @@ class MultiTrackTimelineWidget(QWidget):
             print(f"[DEBUG] Finished manipulation on clip '{self.activeClip.shot.name}'")
             self.activeClip = None
             self.activeClipAction = None
+            self.updateTimelineRange()
+            self.update()
         super().mouseReleaseEvent(event)
 
     def paintClips(self, painter):
@@ -948,18 +1045,31 @@ class MultiTrackTimelineWidget(QWidget):
             else:
                 painter.fillRect(right_handle, QColor(200, 200, 200))
 
+    def _rulerStep(self) -> float:
+        """Pick a tick step so labels stay at least ~60px apart at any zoom."""
+        candidates = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+        for step in candidates:
+            if step * self.scale >= 60:
+                return step
+        return candidates[-1]
+
     def paintEvent(self, event):
-        # self.updateTimelineRange()
         painter = QPainter(self)
         # Draw ruler.
         ruler_rect = QRect(self.left_panel_width, 0, self.width() - self.left_panel_width, self.ruler_height)
         painter.fillRect(ruler_rect, QColor(50, 50, 50))
-        seconds = int((self.width() - self.left_panel_width) / self.scale) + 1
-        for s in range(seconds):
-            x = self.left_panel_width + int(s * self.scale)
-            painter.setPen(QPen(QColor(200, 200, 200), 1))
-            painter.drawLine(x, 0, x, self.ruler_height)
-            painter.drawText(x + 2, self.ruler_height - 2, f"{s}s")
+        step = self._rulerStep()
+        t = max(0.0, (self.time_offset // step) * step)
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        while True:
+            x = self.timeToX(t)
+            if x > self.width():
+                break
+            if x >= self.left_panel_width:
+                painter.drawLine(x, 0, x, self.ruler_height)
+                label = f"{t:g}s"
+                painter.drawText(x + 2, self.ruler_height - 2, label)
+            t += step
         # Draw left panel (track labels).
         left_rect = QRect(0, self.ruler_height, self.left_panel_width, self.height() - self.ruler_height)
         painter.fillRect(left_rect, QColor(80, 80, 80))
@@ -977,12 +1087,7 @@ class MultiTrackTimelineWidget(QWidget):
             painter.drawText(5, int(y + self.track_height / 2), track + extra)
         # Draw drop preview rectangle with target track name.
         if self.dropPreviewClip:
-            preview_rect = QRect(
-                self.left_panel_width + int(self.dropPreviewClip.start_time * self.scale),
-                self.ruler_height + 5,
-                int(self.dropPreviewClip.length * self.scale),
-                self.track_height - 10
-            )
+            preview_rect = self.clipRect(self.dropPreviewClip)
             preview_pen = QPen(QColor(0, 255, 255), 2, Qt.PenStyle.DashLine)
             painter.setPen(preview_pen)
             painter.drawRect(preview_rect)
@@ -992,61 +1097,43 @@ class MultiTrackTimelineWidget(QWidget):
             painter.drawText(preview_rect, Qt.AlignmentFlag.AlignCenter, self.dropPreviewClip.track)
         # Draw clips.
         self.paintClips(painter)
-        # Draw playhead.
-        playhead_x = self.left_panel_width + int(self.playhead * self.scale)
-        painter.setPen(QPen(QColor(255, 0, 0), 2))
-        painter.drawLine(playhead_x, self.ruler_height, playhead_x, self.height())
+        # Draw playhead (only when inside the visible range).
+        playhead_x = self.timeToX(self.playhead)
+        if playhead_x >= self.left_panel_width:
+            painter.setPen(QPen(QColor(255, 0, 0), 2))
+            painter.drawLine(playhead_x, self.ruler_height, playhead_x, self.height())
         painter.end()
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-shot"):
-            event.acceptProposedAction()
-            data = event.mimeData().data("application/x-shot")
-            try:
-                shots_data = json.loads(bytes(data).decode("utf-8"))
-                if shots_data:
-                    shot = Shot(**shots_data[0])
-                    clip_length = (shot.outPoint - shot.inPoint) * shot.duration
-                    drop_time = max(0.0, (event.pos().x() - self.left_panel_width) / self.scale)
-                    drop_y = event.pos().y()
-                    track_index = (drop_y - self.ruler_height) // self.track_height
-                    if track_index < 0:
-                        track_index = 0
-                    if track_index >= len(self.tracks):
-                        track_index = len(self.tracks) - 1
-                    selected_track = self.tracks[track_index]
-                    self.dropPreviewClip = TimelineClip(shot=shot, track=selected_track, start_time=drop_time,
-                                                        length=clip_length)
-            except Exception as e:
-                print("[DEBUG] DragEnter preview error:", e)
-            self.update()
-        else:
+    def _dropTargetForEvent(self, event):
+        """Returns (drop_time, track_name) for a drag/drop event position."""
+        pos = event.pos() if hasattr(event, "pos") else event.position().toPoint()
+        drop_time = max(0.0, self.xToTime(pos.x()))
+        track_index = int((pos.y() - self.ruler_height) // self.track_height)
+        track_index = max(0, min(track_index, len(self.tracks) - 1))
+        return drop_time, self.tracks[track_index]
+
+    def _updateDropPreview(self, event):
+        if not event.mimeData().hasFormat("application/x-shot"):
             event.ignore()
+            return
+        event.acceptProposedAction()
+        try:
+            shots_data = json.loads(bytes(event.mimeData().data("application/x-shot")).decode("utf-8"))
+            if shots_data:
+                shot = Shot.from_dict(shots_data[0])
+                clip_length = max(shot.duration, 1.0 / max(self.fps, 1))
+                drop_time, selected_track = self._dropTargetForEvent(event)
+                self.dropPreviewClip = TimelineClip(shot=shot, track=selected_track, start_time=drop_time,
+                                                    length=clip_length)
+        except Exception as e:
+            print("[DEBUG] Drag preview error:", e)
+        self.update()
+
+    def dragEnterEvent(self, event):
+        self._updateDropPreview(event)
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat("application/x-shot"):
-            event.acceptProposedAction()
-            data = event.mimeData().data("application/x-shot")
-            try:
-                shots_data = json.loads(bytes(data).decode("utf-8"))
-                if shots_data:
-                    shot = Shot(**shots_data[0])
-                    clip_length = (shot.outPoint - shot.inPoint) * shot.duration
-                    drop_time = max(0.0, (event.pos().x() - self.left_panel_width) / self.scale)
-                    drop_y = event.pos().y()
-                    track_index = (drop_y - self.ruler_height) // self.track_height
-                    if track_index < 0:
-                        track_index = 0
-                    if track_index >= len(self.tracks):
-                        track_index = len(self.tracks) - 1
-                    selected_track = self.tracks[track_index]
-                    self.dropPreviewClip = TimelineClip(shot=shot, track=selected_track, start_time=drop_time,
-                                                        length=clip_length)
-            except Exception as e:
-                print("[DEBUG] DragMove preview error:", e)
-            self.update()
-        else:
-            event.ignore()
+        self._updateDropPreview(event)
 
     def dragLeaveEvent(self, event):
         self.dropPreviewClip = None
@@ -1058,20 +1145,11 @@ class MultiTrackTimelineWidget(QWidget):
             data = event.mimeData().data("application/x-shot")
             try:
                 shots_data = json.loads(bytes(data).decode("utf-8"))
-                pos = event.pos()
-                drop_time = max(0.0, (pos.x() - self.left_panel_width) / self.scale)
-                drop_y = pos.y()
-                track_index = (drop_y - self.ruler_height) // self.track_height
-                if track_index < 0:
-                    track_index = 0
-                if track_index >= len(self.tracks):
-                    track_index = len(self.tracks) - 1
-                selected_track = self.tracks[track_index]
-                print(
-                    f"[DEBUG] Drop event at pos {pos}, calculated drop_time: {drop_time}s on track '{selected_track}'")
+                drop_time, selected_track = self._dropTargetForEvent(event)
+                print(f"[DEBUG] Drop event, drop_time: {drop_time}s on track '{selected_track}'")
                 for shot_dict in shots_data:
-                    shot = Shot(**shot_dict)
-                    clip_length = (shot.outPoint - shot.inPoint) * shot.duration
+                    shot = Shot.from_dict(shot_dict)
+                    clip_length = max(shot.duration, 1.0 / max(self.fps, 1))
                     new_clip = TimelineClip(shot=shot, track=selected_track, start_time=drop_time, length=clip_length)
                     clips_on_track = [c for c in self.timeline_clips if c.track == selected_track]
                     if clips_on_track:
@@ -1097,7 +1175,10 @@ class MultiTrackTimelineWidget(QWidget):
                         self.handleOverlap(audio_clip)
                         self.timeline_clips.append(audio_clip)
                         print(f"[DEBUG] Added linked audio clip: {audio_clip}")
+                    # When several shots are dropped together, lay them out back-to-back.
+                    drop_time = new_clip.start_time + new_clip.length
                 self.dropPreviewClip = None
+                self.updateTimelineRange()
                 self.update()
                 event.acceptProposedAction()
             except Exception as e:
@@ -1105,6 +1186,199 @@ class MultiTrackTimelineWidget(QWidget):
                 event.ignore()
         else:
             event.ignore()
+
+    # --- Project persistence -------------------------------------------------
+    def serializeTimeline(self) -> dict:
+        """Serializes tracks, settings and clips so the timeline can be saved with a project."""
+        return {
+            "video_tracks": list(self.video_tracks),
+            "audio_tracks": list(self.audio_tracks),
+            "track_settings": copy.deepcopy(self.track_settings),
+            "playhead": self.playhead,
+            "scale": self.scale,
+            "time_offset": self.time_offset,
+            "work_area_start": self.work_area_start,
+            "work_area_end": self.work_area_end,
+            "clips": [
+                {
+                    "shot": clip.shot.to_dict(),
+                    "track": clip.track,
+                    "start_time": clip.start_time,
+                    "length": clip.length,
+                }
+                for clip in self.timeline_clips
+            ],
+        }
+
+    def restoreTimeline(self, data: dict):
+        """Restores a timeline previously produced by serializeTimeline()."""
+        if not isinstance(data, dict):
+            return
+        self.video_tracks = list(data.get("video_tracks") or ["Video 1"])
+        self.audio_tracks = list(data.get("audio_tracks") or ["Audio 1"])
+        self.track_settings = data.get("track_settings") or {}
+        for t in self.video_tracks:
+            self.track_settings.setdefault(t, {"visible": True})
+        for t in self.audio_tracks:
+            self.track_settings.setdefault(t, {"mute": False, "solo": False, "level": 1.0})
+        self.updateTracks()
+
+        self.timeline_clips = []
+        for clip_data in data.get("clips", []):
+            try:
+                shot = Shot.from_dict(clip_data.get("shot", {}))
+                track = clip_data.get("track", self.tracks[0])
+                if track not in self.tracks:
+                    track = self.tracks[0]
+                self.timeline_clips.append(TimelineClip(
+                    shot=shot,
+                    track=track,
+                    start_time=float(clip_data.get("start_time", 0.0)),
+                    length=max(0.01, float(clip_data.get("length", shot.duration or 1.0))),
+                ))
+            except Exception as e:
+                print(f"[DEBUG] Skipping unrestorable timeline clip: {e}")
+        self.playhead = float(data.get("playhead", 0.0))
+        self.scale = float(data.get("scale", 100.0)) or 100.0
+        self.time_offset = max(0.0, float(data.get("time_offset", 0.0)))
+        self.work_area_start = float(data.get("work_area_start", 0.0))
+        self.work_area_end = float(data.get("work_area_end", 0.0))
+        self.selectedClips = []
+        self.activeClip = None
+        self.updateTimelineRange()
+        self.frameReadoutLabel.updateText()
+        self.update()
+
+    def clearTimeline(self):
+        self.timeline_clips = []
+        self.selectedClips = []
+        self.activeClip = None
+        self.playhead = 0.0
+        self.time_offset = 0.0
+        self.timeline_start = 0.0
+        self.timeline_end = 0.0
+        self.work_area_start = 0.0
+        self.work_area_end = 0.0
+        self.frameReadoutLabel.updateText()
+        self.update()
+
+
+########################################################################
+# TimelineExportWorker: renders the arranged timeline to a video via ffmpeg
+########################################################################
+class TimelineExportWorker(QtCore.QThread):
+    progress = Signal(int, str)   # percent, message
+    finished = Signal(bool, str)  # success, message/output path
+
+    def __init__(self, clips, output_path, fps=25.0, parent=None):
+        super().__init__(parent)
+        # clips: list of dicts {videoPath, src_start, duration, gap_before}
+        self.clips = clips
+        self.output_path = output_path
+        self.fps = fps
+
+    @staticmethod
+    def _hasAudio(path) -> bool:
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "a",
+                 "-show_entries", "stream=index", "-of", "csv=p=0", path],
+                capture_output=True, text=True, timeout=15
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _videoSize(path):
+        cap = cv2.VideoCapture(path)
+        try:
+            if cap.isOpened():
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                if w > 0 and h > 0:
+                    # Even dimensions are required by libx264/yuv420p.
+                    return w - (w % 2), h - (h % 2)
+        finally:
+            cap.release()
+        return 1280, 720
+
+    def run(self):
+        import subprocess, tempfile, shutil
+        if shutil.which("ffmpeg") is None:
+            self.finished.emit(False, "ffmpeg was not found on PATH. Please install ffmpeg to export video.")
+            return
+        if not self.clips:
+            self.finished.emit(False, "The timeline has no video clips to export.")
+            return
+
+        tmp_dir = tempfile.mkdtemp(prefix="comfystudio_export_")
+        segments = []
+        width, height = self._videoSize(self.clips[0]["videoPath"])
+        vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+        common_video = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                        "-pix_fmt", "yuv420p", "-r", f"{self.fps}"]
+        common_audio = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
+
+        try:
+            total_steps = len(self.clips) + 1
+            step = 0
+            for i, clip in enumerate(self.clips):
+                # Insert black filler for gaps between clips.
+                gap = clip.get("gap_before", 0.0)
+                if gap > 0.05:
+                    seg = os.path.join(tmp_dir, f"gap_{i:03d}.mp4")
+                    cmd = ["ffmpeg", "-y",
+                           "-f", "lavfi", "-i", f"color=black:s={width}x{height}:r={self.fps}",
+                           "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                           "-t", f"{gap:.3f}"] + common_video + common_audio + ["-shortest", seg]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        raise RuntimeError(f"ffmpeg failed on gap segment:\n{result.stderr[-800:]}")
+                    segments.append(seg)
+
+                seg = os.path.join(tmp_dir, f"seg_{i:03d}.mp4")
+                src = clip["videoPath"]
+                src_start = max(0.0, clip["src_start"])
+                duration = max(0.04, clip["duration"])
+                if self._hasAudio(src):
+                    cmd = (["ffmpeg", "-y", "-ss", f"{src_start:.3f}", "-i", src,
+                            "-t", f"{duration:.3f}", "-vf", vf]
+                           + common_video + common_audio + [seg])
+                else:
+                    # Add silent audio so every segment has matching streams for concat.
+                    cmd = (["ffmpeg", "-y", "-ss", f"{src_start:.3f}", "-i", src,
+                            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                            "-t", f"{duration:.3f}", "-vf", vf,
+                            "-map", "0:v:0", "-map", "1:a:0"]
+                           + common_video + common_audio + ["-shortest", seg])
+                self.progress.emit(int(100 * step / total_steps),
+                                   f"Encoding clip {i + 1}/{len(self.clips)}...")
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise RuntimeError(f"ffmpeg failed on clip {i + 1}:\n{result.stderr[-800:]}")
+                segments.append(seg)
+                step += 1
+
+            self.progress.emit(int(100 * step / total_steps), "Joining segments...")
+            list_path = os.path.join(tmp_dir, "concat.txt")
+            with open(list_path, "w", encoding="utf-8") as f:
+                for seg in segments:
+                    f.write(f"file '{seg}'\n")
+            cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                   "-c", "copy", self.output_path]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed while joining segments:\n{result.stderr[-800:]}")
+            self.progress.emit(100, "Done")
+            self.finished.emit(True, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 ########################################################################
 # PreviewWidget: The main preview showing the frame at the playhead position
@@ -1164,9 +1438,11 @@ class ShotManagerWidget:
 
         # Create Preview dock.
         self.previewWidget = PreviewWidget(self.timelineWidget)
-        self.previewDock = QDockWidget("Preview", main_window)
+        self.previewDock = QDockWidget("Timeline Preview", main_window)
         self.previewDock.setWidget(self.previewWidget)
-        self.previewDock.setObjectName("preview_dock")
+        # NOTE: must differ from the main window's "preview_dock" objectName,
+        # otherwise saveState/restoreState gets confused by the duplicate.
+        self.previewDock.setObjectName("timeline_preview_dock")
         main_window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.previewDock)
         print("[DEBUG] Registered Preview dock.")
 
@@ -1178,17 +1454,113 @@ class ShotManagerWidget:
         self.bladeAction = QtGui.QAction("Blade", self.toolbar)
         self.addVideoTrackAction = QtGui.QAction("Add Video Track", self.toolbar)
         self.addAudioTrackAction = QtGui.QAction("Add Audio Track", self.toolbar)
+        self.exportAction = QtGui.QAction("Export Video", self.toolbar)
         self.toolbar.addAction(self.selectAction)
         self.toolbar.addAction(self.bladeAction)
         self.toolbar.addSeparator()
         self.toolbar.addAction(self.addVideoTrackAction)
         self.toolbar.addAction(self.addAudioTrackAction)
+        self.toolbar.addSeparator()
+        self.toolbar.addAction(self.exportAction)
         self.selectAction.triggered.connect(lambda: self.setToolMode("select"))
         self.bladeAction.triggered.connect(lambda: self.setToolMode("blade"))
         self.addVideoTrackAction.triggered.connect(self.timelineWidget.addVideoTrack)
         self.addAudioTrackAction.triggered.connect(self.timelineWidget.addAudioTrack)
+        self.exportAction.triggered.connect(self.exportTimelineVideo)
+        self._export_worker = None
+        self._export_progress = None
         print("[DEBUG] Registered Timeline toolbar.")
 
     def setToolMode(self, mode: str):
         self.timelineWidget.toolMode = mode
         print(f"[DEBUG] Tool mode set to '{mode}'")
+
+    # --- Project persistence (delegated from the main window) ---
+    def serializeTimeline(self) -> dict:
+        return self.timelineWidget.serializeTimeline()
+
+    def restoreTimeline(self, data: dict):
+        self.timelineWidget.restoreTimeline(data)
+
+    def clearTimeline(self):
+        self.timelineWidget.clearTimeline()
+
+    def updateTexts(self):
+        """Hook for retranslateUi; timeline labels are currently not localized."""
+        pass
+
+    # --- Final video export ---
+    def exportTimelineVideo(self):
+        tw = self.timelineWidget
+        # Collect visible video-track clips in chronological order.
+        clips = sorted(
+            (c for c in tw.timeline_clips
+             if c.track.lower().startswith("video")
+             and tw.track_settings.get(c.track, {}).get("visible", True)),
+            key=lambda c: c.start_time
+        )
+        export_clips = []
+        prev_end = 0.0
+        for clip in clips:
+            src = clip.shot.videoPath
+            if not src or not os.path.exists(src):
+                QtWidgets.QMessageBox.warning(
+                    self.main_window, "Export",
+                    f"Clip '{clip.shot.name}' has no valid video file and will be skipped."
+                )
+                continue
+            raw = clip.shot.raw_duration
+            export_clips.append({
+                "videoPath": src,
+                "src_start": clip.shot.inPoint * raw,
+                "duration": clip.length,
+                "gap_before": max(0.0, clip.start_time - prev_end),
+            })
+            prev_end = max(prev_end, clip.start_time + clip.length)
+        if not export_clips:
+            QtWidgets.QMessageBox.information(
+                self.main_window, "Export", "The timeline has no exportable video clips."
+            )
+            return
+
+        output_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.main_window, "Export Timeline Video", "",
+            "Video Files (*.mp4);;All Files (*)"
+        )
+        if not output_path:
+            return
+        if not os.path.splitext(output_path)[1]:
+            output_path += ".mp4"
+
+        progress = QtWidgets.QProgressDialog("Exporting timeline...", "Cancel", 0, 100, self.main_window)
+        progress.setWindowTitle("Export Timeline")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker = TimelineExportWorker(export_clips, output_path, fps=tw.playback_fps)
+        self._export_worker = worker
+        self._export_progress = progress
+
+        def on_progress(pct, msg):
+            progress.setValue(pct)
+            progress.setLabelText(msg)
+
+        def on_finished(success, message):
+            progress.reset()
+            progress.close()
+            self._export_worker = None
+            self._export_progress = None
+            if success:
+                QtWidgets.QMessageBox.information(
+                    self.main_window, "Export", f"Timeline exported to:\n{message}"
+                )
+            else:
+                QtWidgets.QMessageBox.critical(
+                    self.main_window, "Export Failed", message
+                )
+
+        worker.progress.connect(on_progress)
+        worker.finished.connect(on_finished)
+        progress.canceled.connect(worker.terminate)
+        worker.start()

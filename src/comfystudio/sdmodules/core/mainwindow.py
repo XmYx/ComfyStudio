@@ -158,6 +158,8 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                     {"name": "saveAct", "text": "Save", "trigger": self.saveProject},
                     {"name": "saveAsAct", "text": "Save As", "trigger": self.saveProjectAs},
                     {"name": "importAction", "text": "Import", "trigger": self.importShotsFromTxt},
+                    {"name": "importExampleWorkflowsAct", "text": "Import Example Workflows",
+                     "trigger": self.openWorkflowBrowser},
                     {"separator": True},
                     {"name": "renderSelectedAct", "text": "Render Selected", "trigger": self.onRenderSelected},
                     {"name": "renderAllAct", "text": "Render All", "trigger": self.onRenderAll},
@@ -434,14 +436,24 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         Args:
             checked (bool): The checked state of the toggle action.
         """
+        if not hasattr(self, "webBrowserDock"):
+            return
         if checked:
             # Show the WebBrowser dock
             self.webBrowserDock.setVisible(True)
 
-            # Retrieve the 'comfy_ip' URL from settings
-            comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
-            # Load the URL in the WebBrowser view
-            self.webBrowserView.setUrl(QUrl(comfy_ip))
+            # Load the ComfyUI page if the view is still blank.
+            current_url = self.webBrowserView.url().toString()
+            if not current_url or current_url == "about:blank":
+                comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
+                self.webBrowserView.setUrl(QUrl(comfy_ip))
+
+            # Open the currently selected workflow in the editor.
+            item = self.workflowListWidget.currentItem()
+            if item:
+                workflow = item.data(Qt.ItemDataRole.UserRole)
+                if workflow:
+                    self.loadWorkflowInBrowser(workflow)
         else:
             # Hide the WebBrowser dock
             self.webBrowserDock.hide()
@@ -807,6 +819,8 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
     def cleanUp(self):
         self.saveWindowState()
         self.settingsManager.save()
+        if hasattr(self, "workflowEditBridge"):
+            self.workflowEditBridge.shutdown()
         self.stopComfy()
 
     def closeEvent(self, event):

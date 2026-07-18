@@ -12,13 +12,13 @@ from comfystudio.sdmodules.core.mainwindow import ComfyStudioWindow
 
 
 def main():
-    from comfystudio.sdmodules.qss import qss
+    from comfystudio.sdmodules.qss import get_stylesheet
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     # app.setStyle(QStyleFactory.create("Fusion"))
-    app.setStyleSheet(qss)
-    # window = MainWindow()
     window = ComfyStudioWindow()
+    # Apply the theme chosen in settings (defaults to dark).
+    app.setStyleSheet(get_stylesheet(window.settingsManager.get("theme", "dark")))
 
     window.show()
     sys.exit(app.exec())

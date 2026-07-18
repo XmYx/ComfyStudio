@@ -12,6 +12,8 @@ class WorkflowAssignment:
     isVideo: bool = False
     lastSignature: str = field(default_factory=str)
     versions: List[Dict[str, Any]] = field(default_factory=list)  # New field for version snapshots
+    # Index of the version currently selected in the UI dropdown (0 == placeholder / latest params).
+    selected_version_index: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -20,7 +22,8 @@ class WorkflowAssignment:
             "parameters": self.parameters,
             "isVideo": self.isVideo,
             "lastSignature": self.lastSignature,
-            "versions": self.versions  # Include versions when serializing
+            "versions": self.versions,  # Include versions when serializing
+            "selected_version_index": self.selected_version_index
         }
 
     @classmethod
@@ -31,7 +34,8 @@ class WorkflowAssignment:
             parameters=data.get('parameters', {}),
             isVideo=data.get('isVideo', False),
             lastSignature=data.get('lastSignature', ""),
-            versions=data.get('versions', [])  # Load versions if present
+            versions=data.get('versions', []),  # Load versions if present
+            selected_version_index=data.get('selected_version_index', 0)
         )
 
     def get(self, name, default=None):
@@ -75,31 +79,39 @@ class Shot:
         object.__setattr__(self, name, value)
 
     @property
-    def duration(self) -> float:
+    def raw_duration(self) -> float:
         """
-        Computes the shot's duration (in seconds) based on its video file and fps.
-        The computed duration is then scaled by (outPoint - inPoint) and cached
-        for later use.
+        The full (untrimmed) duration of the source video in seconds.
+        Falls back to default_duration when the file can't be read.
         """
         if self._cached_duration is None:
+            duration = float(self.default_duration)
             if self.videoPath:
-                cap = cv2.VideoCapture(self.videoPath)
-                if cap.isOpened():
-                    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-                    video_fps = cap.get(cv2.CAP_PROP_FPS)
-                    # Use the shot's fps if set (and > 0); otherwise, fall back to the video's fps.
-                    used_fps = self.fps if self.fps > 0 else video_fps
-                    if used_fps > 0:
-                        self._cached_duration = frame_count / used_fps
-                    else:
-                        self._cached_duration = float(self.default_duration)
-                else:
-                    self._cached_duration = float(self.default_duration)
-                cap.release()
-            else:
-                self._cached_duration = float(self.default_duration)
-        # Return the trimmed duration based on the in/out fraction.
-        return self._cached_duration * (self.outPoint - self.inPoint)
+                cap = None
+                try:
+                    cap = cv2.VideoCapture(self.videoPath)
+                    if cap.isOpened():
+                        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                        video_fps = cap.get(cv2.CAP_PROP_FPS)
+                        # Use the shot's fps if set (and > 0); otherwise, fall back to the video's fps.
+                        used_fps = self.fps if self.fps > 0 else video_fps
+                        if used_fps > 0 and frame_count > 0:
+                            duration = frame_count / used_fps
+                except Exception:
+                    pass
+                finally:
+                    if cap is not None:
+                        cap.release()
+            self._cached_duration = duration
+        return self._cached_duration
+
+    @property
+    def duration(self) -> float:
+        """
+        The shot's effective duration (in seconds): the raw source duration
+        scaled by the (inPoint, outPoint) trim fractions.
+        """
+        return self.raw_duration * (self.outPoint - self.inPoint)
 
     @duration.setter
     def duration(self, value: float):
@@ -121,7 +133,12 @@ class Shot:
             "lastVideoSignature": self.lastVideoSignature,
             "workflows": [workflow.to_dict() for workflow in self.workflows],
             "params": self.params,
-            "duration": self.duration  # computed duration
+            "duration": self.raw_duration,  # untrimmed source duration (fallback when file is unreadable)
+            "inPoint": self.inPoint,
+            "outPoint": self.outPoint,
+            "linkedAudio": self.linkedAudio,
+            "thumbnail_path": self.thumbnail_path,
+            "fps": self.fps
         }
 
     @classmethod

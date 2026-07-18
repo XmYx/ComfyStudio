@@ -396,8 +396,8 @@ class ComfyStudioComfyHandler:
             return
 
         try:
-            with open(workflow.path, "r") as f:
-                workflow_json = json.load(f)
+            # Validated load (handles missing files, bad JSON and UI-format exports).
+            workflow_json = self.loadWorkflowJson(workflow.path)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load workflow: {e}")
             if self.render_mode == 'per_shot':
@@ -428,10 +428,12 @@ class ComfyStudioComfyHandler:
                 else:
                     prevWorkflowIndex = None
             if prevWorkflowIndex is not None:
-                prevWf = shot.workflows[prevWorkflowIndex]
-                # Determine the previous output based on the workflow type
-                prevVideo = shot.videoPath if prevWf.isVideo and shot.videoPath else None
-                prevImage = shot.stillPath if (not prevWf.isVideo) and shot.stillPath else None
+                # The chain may mix image and video workflows in any order: a param
+                # asking for the previous image gets the shot's latest still and one
+                # asking for the previous video gets the latest video, regardless of
+                # what type the immediately preceding workflow was declared as.
+                prevVideo = shot.videoPath if (shot.videoPath and os.path.exists(shot.videoPath)) else None
+                prevImage = shot.stillPath if (shot.stillPath and os.path.exists(shot.stillPath)) else None
                 for param in wf_params:
                     if param.get("usePrevResultImage") and prevImage:
                         print(f"[DEBUG] Setting param '{param['name']}' to prevImage: {prevImage}")

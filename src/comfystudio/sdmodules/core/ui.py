@@ -113,34 +113,39 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         self.togglePreviewDockAct.triggered.connect(self.previewDock.setVisible)
         self.windowsMenu.addAction(self.togglePreviewDockAct)
 
-        # Action to toggle Web Browser dock
-        self.toggleWebBrowserAct = QAction(
-            self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser"),
-            self,
-            checkable=True
-        )
-        self.toggleWebBrowserAct.setChecked(False)
-        self.toggleWebBrowserAct.triggered.connect(self.toggleWebBrowser)
-        self.windowsMenu.addAction(self.toggleWebBrowserAct)
+        # Action to toggle Web Browser dock (only when QtWebEngine is available)
+        try:
+            from qtpy.QtWebEngineWidgets import QWebEngineView
+            web_engine_available = True
+        except Exception:
+            web_engine_available = False
+            logging.info("QtWebEngine not available; Web Browser dock disabled.")
+
+        if web_engine_available:
+            self.toggleWebBrowserAct = QAction(
+                self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser"),
+                self,
+                checkable=True
+            )
+            self.toggleWebBrowserAct.setChecked(False)
+            self.toggleWebBrowserAct.triggered.connect(self.toggleWebBrowser)
+            self.windowsMenu.addAction(self.toggleWebBrowserAct)
 
         # Add the Windows menu to the menu bar
         self.menuBar().addMenu(self.windowsMenu)
 
         # Create the WebBrowser dock widget if it doesn't exist
-        if not hasattr(self, 'webBrowserDock'):
+        if web_engine_available and not hasattr(self, 'webBrowserDock'):
             # Initialize the WebBrowser dock
             self.webBrowserDock = QDockWidget(
                 self.localization.translate("dock_web_browser", default="Web Browser"),
                 self
             )
+            self.webBrowserDock.setObjectName("web_browser_dock")
             self.webBrowserDock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-
-            # Initialize the WebBrowser view
-            from qtpy.QtWebEngineWidgets import QWebEngineView
 
             self.webBrowserView = QWebEngineView()
             self.webBrowserDock.setWidget(self.webBrowserView)
-            # self.setCentralWidget(self.webBrowserDock)
             # Retrieve the 'comfy_ip' URL from settings
             comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
 
@@ -148,11 +153,158 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.webBrowserView.setUrl(QUrl(comfy_ip))
             # Add the WebBrowser dock to the same area as Shot Details and tabify
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.webBrowserDock)
-            # self.tabifyDockWidget(self.dock, self.webBrowserDock)
+            self.webBrowserDock.hide()
 
-            # Initially hide the WebBrowser dock
-            # self.webBrowserDock.hide()
+            # Bridge so the embedded ComfyUI can save workflows back into ComfyStudio.
+            from comfystudio.sdmodules.workflow_edit_server import WorkflowEditBridge
+            self.workflowEditBridge = WorkflowEditBridge(self)
+            self.workflowEditBridge.workflowSaved.connect(self.onWorkflowFileSaved)
+            self.webBrowserView.loadFinished.connect(self._injectComfySaveHook)
         self.updateWindowsMenuTexts()
+
+    def _injectComfySaveHook(self, ok=True):
+        """
+        Installs a Ctrl+S / Cmd+S hook in the embedded ComfyUI page that posts the
+        current graph (API format) to ComfyStudio's local save endpoint instead of
+        triggering the browser/ComfyUI download.
+        """
+        if not ok or not hasattr(self, "workflowEditBridge"):
+            return
+        js = """
+(function() {
+    if (window.__comfyStudioSaveHook) return;
+    window.__comfyStudioSaveHook = true;
+    const PORT = %d;
+    async function comfyStudioSave() {
+        try {
+            const app = window.app;
+            if (!app || typeof app.graphToPrompt !== 'function') {
+                console.warn('[ComfyStudio] ComfyUI app not ready, cannot save');
+                return;
+            }
+            const p = await app.graphToPrompt();
+            const resp = await fetch('http://127.0.0.1:' + PORT + '/save_workflow', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(p.output)
+            });
+            const result = await resp.json().catch(() => ({}));
+            if (resp.ok) {
+                console.log('[ComfyStudio] Workflow saved to', result.path);
+            } else {
+                console.warn('[ComfyStudio] Save failed:', result.error || resp.status);
+            }
+        } catch (e) {
+            console.warn('[ComfyStudio] Save error:', e);
+        }
+    }
+    window.comfyStudioSave = comfyStudioSave;
+    window.addEventListener('keydown', function(ev) {
+        if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey &&
+                (ev.key === 's' || ev.key === 'S')) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            comfyStudioSave();
+        }
+    }, true);
+    console.log('[ComfyStudio] Save hook installed (Ctrl/Cmd+S -> ComfyStudio, port ' + PORT + ')');
+})();
+""" % self.workflowEditBridge.port
+        self.webBrowserView.page().runJavaScript(js)
+
+    def loadWorkflowInBrowser(self, workflow):
+        """
+        Loads the given workflow assignment's JSON into the embedded ComfyUI
+        graph editor so it can be edited (and saved back with Ctrl+S).
+        """
+        if not hasattr(self, "webBrowserView"):
+            QMessageBox.information(
+                self, "Web Browser Unavailable",
+                "The embedded browser requires PyQt6-WebEngine, which is not installed."
+            )
+            return False
+        try:
+            wf_json = self.loadWorkflowJson(workflow.path)
+        except ValueError as e:
+            QMessageBox.warning(self, "Error", str(e))
+            return False
+
+        if hasattr(self, "workflowEditBridge"):
+            self.workflowEditBridge.set_target(workflow.path)
+        self._watchWorkflowFile(workflow.path)
+
+        # Make sure the ComfyUI page itself is loaded.
+        comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
+        current_url = self.webBrowserView.url().toString()
+        if not current_url or current_url == "about:blank":
+            self.webBrowserView.setUrl(QUrl(comfy_ip))
+
+        name = os.path.basename(workflow.path)
+        js = """
+(function() {
+    const data = %s;
+    const name = %s;
+    function tryLoad() {
+        try {
+            const app = window.app;
+            if (app && typeof app.loadApiJson === 'function') {
+                app.loadApiJson(data, name);
+                console.log('[ComfyStudio] Loaded workflow', name);
+                return true;
+            }
+            if (app && typeof app.loadGraphData === 'function' && data.nodes) {
+                app.loadGraphData(data);
+                return true;
+            }
+        } catch (e) {
+            console.warn('[ComfyStudio] Failed to load workflow:', e);
+            return true;  // stop retrying on a hard error
+        }
+        return false;
+    }
+    if (!tryLoad()) {
+        let attempts = 0;
+        const timer = setInterval(function() {
+            if (tryLoad() || ++attempts > 50) clearInterval(timer);
+        }, 200);
+    }
+})();
+""" % (json.dumps(wf_json), json.dumps(name))
+        self.webBrowserView.page().runJavaScript(js)
+        self.status_widgets["statusMessage"].setText(
+            f"Opened '{name}' in ComfyUI editor (Ctrl+S there saves back to ComfyStudio)."
+        )
+        return True
+
+    def onWorkflowFileSaved(self, path):
+        """A workflow file was rewritten by the embedded ComfyUI editor."""
+        self.status_widgets["statusMessage"].setText(
+            f"Workflow saved from ComfyUI: {os.path.basename(path)}"
+        )
+        self.syncWorkflowFromFile(path)
+
+    # --- Workflow file watching (external edits & embedded-editor saves) ---
+    def _workflowFileWatcher(self):
+        if not hasattr(self, "_workflowWatcherObj"):
+            from qtpy.QtCore import QFileSystemWatcher
+            self._workflowWatcherObj = QFileSystemWatcher(self)
+            self._workflowWatcherObj.fileChanged.connect(self._onWorkflowFileChanged)
+        return self._workflowWatcherObj
+
+    def _watchWorkflowFile(self, path):
+        if path and os.path.isfile(path):
+            watcher = self._workflowFileWatcher()
+            if path not in watcher.files():
+                watcher.addPath(path)
+
+    def _onWorkflowFileChanged(self, path):
+        # Debounce: editors often emit several change events per save, and some
+        # replace the file (which drops it from the watcher, so re-add it).
+        def resync():
+            if os.path.isfile(path):
+                self._watchWorkflowFile(path)
+                self.syncWorkflowFromFile(path)
+        QTimer.singleShot(250, resync)
 
     def create_dynamic_menu_bar(self, menu_config):
         """
@@ -656,27 +808,49 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.localization.translate("tooltip_toggle_preview_dock", default="Show or hide the Preview Dock")
         )
 
-        self.toggleWebBrowserAct.setText(
-            self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser")
-        )
-        self.toggleWebBrowserAct.setToolTip(
-            self.localization.translate("tooltip_toggle_webbrowser", default="Show or hide the Web Browser dock")
-        )
+        if hasattr(self, "toggleWebBrowserAct"):
+            self.toggleWebBrowserAct.setText(
+                self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser")
+            )
+            self.toggleWebBrowserAct.setToolTip(
+                self.localization.translate("tooltip_toggle_webbrowser", default="Show or hide the Web Browser dock")
+            )
 
         # Update WebBrowser dock title
-        self.webBrowserDock.setWindowTitle(
-            self.localization.translate("dock_web_browser", default="Web Browser")
-        )
+        if hasattr(self, "webBrowserDock"):
+            self.webBrowserDock.setWindowTitle(
+                self.localization.translate("dock_web_browser", default="Web Browser")
+            )
 
     def openProjectFromPath(self, filePath):
         if os.path.exists(filePath):
             try:
                 with open(filePath, "r") as f:
                     project_data = json.load(f)
+                if not isinstance(project_data, dict):
+                    raise ValueError("Project file is not a valid ComfyStudio project (expected a JSON object).")
                 shots_data = project_data.get("shots", [])
                 self.shots = [Shot.from_dict(shot_dict) for shot_dict in shots_data]
+                self.currentShotIndex = 0 if self.shots else -1
+                self.lastSelectedWorkflowIndex = {}
+                # Watch every referenced workflow file for external edits.
+                for shot in self.shots:
+                    for wf in shot.workflows:
+                        self._watchWorkflowFile(wf.path)
                 self.updateList()
+                if self.shots:
+                    self.listWidget.setCurrentRow(0)
                 self.currentFilePath = filePath
+                # Restore the timeline layout if it was saved with the project.
+                timeline_data = project_data.get("timeline")
+                if hasattr(self, "listWidgetBase"):
+                    try:
+                        if timeline_data:
+                            self.listWidgetBase.restoreTimeline(timeline_data)
+                        else:
+                            self.listWidgetBase.clearTimeline()
+                    except Exception as e:
+                        logging.warning(f"Failed to restore timeline: {e}")
                 self.status_widgets["statusMessage"].setText(
                     f"{self.localization.translate('status_loaded_from', default='Project loaded from')} {filePath}")
                 self.fillDock()
@@ -692,10 +866,9 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                                                             default=f"Project file not found: {filePath}"))
             self.clearRecents()
     def fillDock(self):
-        print("fillDock was called")
-        # if self.currentShotIndex is None or self.currentShotIndex >= len(self.shots):
-        #     self.clearDock()
-        #     return
+        if self.currentShotIndex is None or not (0 <= self.currentShotIndex < len(self.shots)):
+            self.clearDock()
+            return
         shot = self.shots[self.currentShotIndex]
         self.refreshWorkflowsList(shot)
         self.refreshParamsList(shot)
@@ -713,15 +886,33 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         """
         Creates a QComboBox populated with version snapshots for a given workflow.
         The first entry is a placeholder, and then one entry per version.
+        The previously selected version is restored (without re-triggering the
+        version-changed handler while the dropdown is being rebuilt).
         """
+        import datetime
         combo = QComboBox()
-        combo.addItem("Select version")  # Placeholder item
+        combo.blockSignals(True)
+        combo.addItem("Current (unsaved) parameters")  # Placeholder item
 
-        # Populate with versions if any exist.
-        for idx, version in enumerate(workflow.get("versions", [])):
-            # You can customize the label, for instance, adding a timestamp.
+        versions = workflow.get("versions", []) or []
+        for idx, version in enumerate(versions):
             label = f"Version {idx + 1}"
+            ts = version.get("timestamp") if isinstance(version, dict) else None
+            if ts:
+                try:
+                    label += datetime.datetime.fromtimestamp(ts).strftime(" (%Y-%m-%d %H:%M)")
+                except Exception:
+                    pass
+            if isinstance(version, dict) and version.get("is_video"):
+                label += " [video]"
             combo.addItem(label, version)  # store the version data in userData
+
+        # Restore the previously selected version for this workflow.
+        saved_idx = workflow.get("selected_version_index", 0) or 0
+        if 0 <= saved_idx < combo.count():
+            combo.setCurrentIndex(saved_idx)
+        combo.blockSignals(False)
+
         # Connect the signal to restore the version when selected.
         combo.currentIndexChanged.connect(
             lambda idx, wf=workflow, cb=combo: self.onWorkflowVersionChanged(wf, cb)
@@ -765,7 +956,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
     #         self.previewDock.showMediaForShotWorkflow(shot, wf_index)
     def onWorkflowVersionChanged(self, workflow, combo):
         idx = combo.currentIndex()
-        # Store the current selection
+        # Store the current selection so it can be restored (and persisted with the project).
         workflow.selected_version_index = idx
         if idx <= 0:
             return
@@ -774,29 +965,30 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         if not version:
             return
 
-        workflow.parameters = version.get("params", {})
+        # Deep-copy the snapshot so subsequent edits don't mutate the stored version.
+        workflow.parameters = copy.deepcopy(version.get("params", {}))
 
         shot = self.getShotForWorkflow(workflow)
         if shot:
-            if version.get("is_video"):
-                shot.videoPath = version.get("output", "")
-            else:
-                shot.stillPath = version.get("output", "")
+            output = version.get("output", "")
+            if output and os.path.exists(output):
+                if version.get("is_video"):
+                    shot.videoPath = output
+                else:
+                    shot.stillPath = output
             self.refreshWorkflowsList(shot)
             self.refreshParamsList(shot)
             try:
                 wf_index = shot.workflows.index(workflow)
             except ValueError:
                 wf_index = 0
-            self.fillDock()
             self.previewDock.showMediaForShotWorkflow(shot, wf_index)
+        self.setProjectModified(True)
 
         # Schedule asynchronous update of the UI without rebuilding the dropdown unnecessarily.
         current_item = self.workflowListWidget.currentItem()
         if current_item:
             QTimer.singleShot(0, lambda: self.onWorkflowItemClicked(current_item))
-
-        workflow.version_dropdown = combo
     def getShotForWorkflow(self, workflow: WorkflowAssignment):
         for shot in self.shots:
             if workflow in shot.workflows:
@@ -875,35 +1067,49 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             dlg.exec()
         except:
             pass
+    def workflowLibraryDirs(self):
+        """Returns (image_dir, video_dir) of the workflow library (settings or bundled)."""
+        # <pkg>/workflows (this file lives in <pkg>/sdmodules/core/)
+        base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "workflows")
+        image_dir = self.settingsManager.get("comfy_image_workflows") or os.path.join(base_dir, "image")
+        video_dir = self.settingsManager.get("comfy_video_workflows") or os.path.join(base_dir, "video")
+        return image_dir, video_dir
+
     def loadWorkflows(self):
-        base_dir = os.path.join(os.path.dirname(__file__), "workflows")
-        image_dir = self.settingsManager.get("comfy_image_workflows", os.path.join(base_dir, "image"))
-        video_dir = self.settingsManager.get("comfy_video_workflows", os.path.join(base_dir, "video"))
-        self.image_workflows = []
-        self.video_workflows = []
-        if os.path.isdir(image_dir):
-            for fname in os.listdir(image_dir):
-                if fname.lower().endswith(".json"):
-                    self.image_workflows.append(os.path.join(image_dir, fname))
-        if os.path.isdir(video_dir):
-            for fname in os.listdir(video_dir):
-                if fname.lower().endswith(".json"):
-                    self.video_workflows.append(os.path.join(video_dir, fname))
+        image_dir, video_dir = self.workflowLibraryDirs()
 
-        # Fill combos
-        self.imageWorkflowCombo.clear()
-        for wf in self.image_workflows:
-            base = os.path.basename(wf)
-            idx = self.imageWorkflowCombo.count()
-            self.imageWorkflowCombo.addItem(base, userData=wf)
-            self.imageWorkflowCombo.setCurrentIndex(idx)
+        def collect_workflows(directory):
+            found = []
+            if not directory or not os.path.isdir(directory):
+                return found
+            try:
+                for fname in sorted(os.listdir(directory), key=str.lower):
+                    if fname.lower().endswith(".json"):
+                        full = os.path.join(directory, fname)
+                        if os.path.isfile(full):
+                            found.append(full)
+            except OSError as e:
+                logging.warning(f"Cannot list workflow directory '{directory}': {e}")
+            return found
 
-        self.videoWorkflowCombo.clear()
-        for wf in self.video_workflows:
-            base = os.path.basename(wf)
-            idx = self.videoWorkflowCombo.count()
-            self.videoWorkflowCombo.addItem(base, userData=wf)
-            self.videoWorkflowCombo.setCurrentIndex(idx)
+        self.image_workflows = collect_workflows(image_dir)
+        self.video_workflows = collect_workflows(video_dir)
+
+        # Fill combos, preserving the current selection when possible.
+        def refill(combo, workflows):
+            previous = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for wf in workflows:
+                combo.addItem(os.path.basename(wf), userData=wf)
+            if previous:
+                idx = combo.findData(previous)
+                if idx != -1:
+                    combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+        refill(self.imageWorkflowCombo, self.image_workflows)
+        refill(self.videoWorkflowCombo, self.video_workflows)
 
     def loadPlugins(self):
         plugins_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "plugins")
@@ -1007,6 +1213,20 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.status_docks["terminalDock"].show()
 
 
+    def openWorkflowBrowser(self):
+        """Opens the ComfyUI examples browser to import workflows into the library."""
+        from comfystudio.sdmodules.workflow_browser import WorkflowBrowserDialog
+        dialog = WorkflowBrowserDialog(self)
+        dialog.exec()
+        if dialog.imported_any:
+            self.loadWorkflows()
+
+    def applyTheme(self):
+        from comfystudio.sdmodules.qss import get_stylesheet
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(get_stylesheet(self.settingsManager.get("theme", "dark")))
+
     def showSettingsDialog(self):
         dialog = SettingsDialog(self.settingsManager, self.localization, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1015,6 +1235,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 self.fillDock()
             # selected_language = dialog.get_selected_language()
             self.localization.set_language(self.settingsManager.get("language"))
+            self.applyTheme()
             # self.retranslateUi()
 
     def openModelManager(self):

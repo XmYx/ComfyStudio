@@ -180,10 +180,17 @@ class EnvSelectionPage(QWizardPage):
         self.python_exe_edit = QLineEdit()
         self.browse_python_btn = QPushButton("Browse")
         self.browse_python_btn.clicked.connect(self.browse_python_executable)
+        self.detect_python_btn = QPushButton("Auto-detect Latest")
+        self.detect_python_btn.setToolTip("Find the newest Python interpreter installed on this machine")
+        self.detect_python_btn.clicked.connect(self.autodetect_latest_python)
 
         python_layout = QHBoxLayout()
         python_layout.addWidget(self.python_exe_edit)
         python_layout.addWidget(self.browse_python_btn)
+        python_layout.addWidget(self.detect_python_btn)
+
+        # Prefill with the newest interpreter found so venvs default to it.
+        self.autodetect_latest_python(quiet=True)
 
         self.venv_dir_edit = QLineEdit()
         self.browse_venv_dir_btn = QPushButton("Browse")
@@ -293,11 +300,15 @@ class EnvSelectionPage(QWizardPage):
             return
         name = name.strip()
 
+        # Default to the newest Python found on this machine.
+        from comfystudio.sdmodules.pyenvutils import find_latest_python
+        _, latest_ver = find_latest_python()
+        default_version = f"{latest_ver[0]}.{latest_ver[1]}" if latest_ver else "3.12"
         python_version, ok = QInputDialog.getText(
             self,
             "Python Version",
-            "Enter Python version for the new environment (e.g., 3.9):",
-            text="3.9"
+            f"Enter Python version for the new environment (e.g., {default_version}):",
+            text=default_version
         )
         if not ok or not python_version.strip():
             return
@@ -323,6 +334,24 @@ class EnvSelectionPage(QWizardPage):
         except subprocess.CalledProcessError as e:
             self.log_message(e.stderr)
             QMessageBox.warning(self, "Error", f"Failed to create Conda environment '{name}':\n{e.stderr}")
+
+    def autodetect_latest_python(self, quiet=False):
+        """
+        Fills the Python executable field with the newest interpreter on the machine.
+        """
+        from comfystudio.sdmodules.pyenvutils import find_latest_python
+        path, version = find_latest_python()
+        if path:
+            self.python_exe_edit.setText(path)
+            if not quiet:
+                ver_str = ".".join(str(v) for v in version)
+                QMessageBox.information(
+                    self, "Python Detected",
+                    f"Newest Python found: {ver_str}\n{path}"
+                )
+        elif not quiet:
+            QMessageBox.warning(self, "Python Not Found",
+                                "No Python interpreter could be found on PATH.")
 
     def browse_python_executable(self):
         """

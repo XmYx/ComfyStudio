@@ -162,6 +162,16 @@ class SettingsDialog(QDialog):
         lang_layout.addWidget(self.lang_combo)
         layout.addRow(lang_label, lang_layout)
 
+        # Theme selection
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem("Light", "light")
+        current_theme = self.settingsManager.get("theme", "dark")
+        theme_idx = self.theme_combo.findData(current_theme)
+        if theme_idx != -1:
+            self.theme_combo.setCurrentIndex(theme_idx)
+        layout.addRow(self.localization.translate("label_theme", default="Theme:"), self.theme_combo)
+
         # Comfy IP
         self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
         layout.addRow("ComfyUI IP/Port:", self.comfyIpEdit)
@@ -269,6 +279,7 @@ class SettingsDialog(QDialog):
 
     def accept(self):
         selected_lang_code = self.lang_combo.currentData()
+        self.settingsManager.set("theme", self.theme_combo.currentData())
         self.settingsManager.set("comfy_ip", self.comfyIpEdit.text().strip())
         self.settingsManager.set("comfy_py_path", self.comfyPyPathEdit.text().strip())
         self.settingsManager.set("comfy_main_path", self.comfyMainPathEdit.text().strip())

@@ -287,6 +287,12 @@ class ShotManager:
         project_data = {
             "shots": [shot.to_dict() for shot in self.shots],
         }
+        # Persist the timeline layout alongside the shots.
+        if hasattr(self, "listWidgetBase") and hasattr(self.listWidgetBase, "serializeTimeline"):
+            try:
+                project_data["timeline"] = self.listWidgetBase.serializeTimeline()
+            except Exception as e:
+                print(f"Failed to serialize timeline: {e}")
         try:
             with open(filePath, 'w') as f:
                 json.dump(project_data, f, indent=4)
