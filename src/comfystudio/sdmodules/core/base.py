@@ -32,7 +32,13 @@ from qtpy.QtWidgets import (
     QFrame
 )
 
-from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
+from comfystudio.sdmodules.cs_datastruts import (
+    RESULT_PORT,
+    Shot,
+    WorkflowAssignment,
+    ensure_unique_workflow_uids,
+    workflow_param_port_id,
+)
 from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.settings import SettingsManager
 from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
@@ -115,7 +121,7 @@ class ComfyStudioBase:
     def newProject(self):
         self.shots.clear()
         self.currentShotIndex = -1
-         self.currentFilePath = None
+        self.currentFilePath = None
 
         self.updateList()
         self.clearDock()
@@ -178,6 +184,21 @@ class ComfyStudioBase:
         if not path:
             return
         self.addWorkflowToShot(path, isVideo=True)
+
+    def addWorkflow(self):
+        """
+        Adds the workflow selected in the unified combo to the current shot.
+        Workflows are type-agnostic; isVideo is only a hint (output subfolder
+        naming) based on which library directory the file came from.
+        """
+        if self.currentShotIndex < 0 or self.currentShotIndex >= len(self.shots):
+            QMessageBox.warning(self, "Warning", "No shot selected.")
+            return
+        path = self.getWidgetData("workflowCombo")
+        if not path:
+            return
+        is_video_hint = path in getattr(self, "video_workflows", [])
+        self.addWorkflowToShot(path, isVideo=is_video_hint)
 
     def loadWorkflowJson(self, workflow_path):
         """
@@ -294,7 +315,8 @@ class ComfyStudioBase:
                         # Keep UI state and dynamic-override configuration.
                         new_param["visible"] = old.get("visible", new_param["visible"])
                         new_param["displayName"] = old.get("displayName", new_param["displayName"])
-                        for flag in ("usePrevResultImage", "usePrevResultVideo", "useApiImage"):
+                        for flag in ("usePrevResultImage", "usePrevResultVideo", "useApiImage",
+                                     "graphInput", "graphOutput"):
                             if old.get(flag):
                                 new_param[flag] = old[flag]
                         if "dynamicOverrides" in old:
@@ -308,6 +330,8 @@ class ComfyStudioBase:
                             new_param["global_var"] = old["global_var"]
                     merged.append(new_param)
                 wf.parameters["params"] = merged
+                # Inputs removed from the file may have been graph ports.
+                self.pruneInvalidConnections(shot)
                 changed_any = True
 
         if changed_any:
@@ -323,6 +347,7 @@ class ComfyStudioBase:
                     current_item = self.workflowListWidget.currentItem()
                     if current_item:
                         self.onWorkflowItemClicked(current_item)
+                self.refreshNodeEditor()
             finally:
                 self._syncingWorkflow = False
             self.status_widgets["statusMessage"].setText(
@@ -367,6 +392,11 @@ class ComfyStudioBase:
                         # Copy basic value
                         param["value"] = default_param.get("value", param["value"])
 
+                        # Preserve graph port exposure saved with the defaults.
+                        for flag in ("graphInput", "graphOutput"):
+                            if default_param.get(flag):
+                                param[flag] = default_param[flag]
+
                         # If the default has dynamicOverrides, merge them too
                         if "dynamicOverrides" in default_param:
                             param["dynamicOverrides"] = copy.deepcopy(default_param["dynamicOverrides"])
@@ -383,8 +413,10 @@ class ComfyStudioBase:
 
             # Attach the new workflow and refresh
             shot.workflows.append(new_workflow)
+            ensure_unique_workflow_uids(shot)
             self.refreshWorkflowsList(shot)
             self.refreshParamsList(shot)
+            self.refreshNodeEditor()
             self._watchWorkflowFile(workflow_path)
             self.setProjectModified(True)
 
@@ -485,6 +517,10 @@ class ComfyStudioBase:
                     suffix = " (Using prev image)"
                 elif param.get("usePrevResultVideo"):
                     suffix = " (Using prev video)"
+                if param.get("graphInput"):
+                    suffix += " (graph in)"
+                if param.get("graphOutput"):
+                    suffix += " (graph out)"
                 if suffix:
                     paramLabel.setText(paramLabel.text() + suffix)
 
@@ -747,6 +783,106 @@ class ComfyStudioBase:
         self.settingsManager.set("workflow_param_visibility", data)
         self.settingsManager.save()
 
+    # --- Shot workflow graph helpers ---------------------------------------
+
+    def refreshNodeEditor(self):
+        """Refreshes the shot node editor dock, when it exists."""
+        editor = getattr(self, "shotNodeEditor", None)
+        if editor is not None:
+            editor.refresh()
+
+    def pruneInvalidConnections(self, shot: Shot) -> bool:
+        """
+        Drops graph connections whose endpoints no longer resolve (workflow
+        removed, param dropped by a resync) and positions of removed
+        workflows. Returns True when anything was removed.
+        """
+        graph = shot.graph
+        by_uid = {wf.uid: wf for wf in shot.workflows}
+
+        def port_exists(wf, port, is_source):
+            if port == RESULT_PORT:
+                return is_source  # Result is an output-only port
+            return any(
+                workflow_param_port_id(p) == port
+                for p in wf.parameters.get("params", [])
+            )
+
+        kept = []
+        for conn in graph.get("connections", []):
+            src = conn.get("from", {})
+            dst = conn.get("to", {})
+            src_wf = by_uid.get(src.get("wf"))
+            dst_wf = by_uid.get(dst.get("wf"))
+            if (src_wf and dst_wf
+                    and port_exists(src_wf, src.get("port"), True)
+                    and port_exists(dst_wf, dst.get("port"), False)):
+                kept.append(conn)
+        changed = len(kept) != len(graph.get("connections", []))
+        graph["connections"] = kept
+
+        positions = graph.get("positions", {})
+        stale = [uid for uid in positions if uid not in by_uid]
+        for uid in stale:
+            del positions[uid]
+        return changed or bool(stale)
+
+    def removeParamPortConnections(self, param) -> bool:
+        """
+        Removes every connection of the current shot that touches the given
+        param's port on its owning workflow (used when un-exposing a port).
+        """
+        if not (0 <= self.currentShotIndex < len(self.shots)):
+            return False
+        shot = self.shots[self.currentShotIndex]
+        owner = None
+        for wf in shot.workflows:
+            if any(p is param for p in wf.parameters.get("params", [])):
+                owner = wf
+                break
+        if owner is None:
+            return False
+        port = workflow_param_port_id(param)
+        conns = shot.graph.get("connections", [])
+        kept = [
+            c for c in conns
+            if not ((c.get("from", {}).get("wf") == owner.uid and c.get("from", {}).get("port") == port)
+                    or (c.get("to", {}).get("wf") == owner.uid and c.get("to", {}).get("port") == port))
+        ]
+        if len(kept) != len(conns):
+            shot.graph["connections"] = kept
+            self.setProjectModified(True)
+            return True
+        return False
+
+    def migrateShotGraph(self, shot: Shot) -> bool:
+        """
+        Converts legacy usePrevResultImage/Video flags into explicit graph
+        connections to the previous enabled workflow's Result port. Idempotent:
+        does nothing when the shot already has connections. The legacy flags
+        are kept on the params — they stay honored at render time as a
+        fallback and keep older builds working.
+        """
+        ensure_unique_workflow_uids(shot)
+        if shot.graph.get("connections"):
+            return False
+        added = False
+        prev = None
+        for wf in shot.workflows:
+            if not wf.enabled:
+                continue
+            if prev is not None:
+                for param in wf.parameters.get("params", []):
+                    if param.get("usePrevResultImage") or param.get("usePrevResultVideo"):
+                        shot.graph["connections"].append({
+                            "from": {"wf": prev.uid, "port": RESULT_PORT},
+                            "to": {"wf": wf.uid, "port": workflow_param_port_id(param)},
+                        })
+                        param["graphInput"] = True
+                        added = True
+            prev = wf
+        return added
+
     def createBasicParamWidget(self, param):
         ptype = param["type"]
         pval = param.get("value", None)
@@ -833,12 +969,14 @@ class ComfyStudioBase:
             )
             if reply == QMessageBox.StandardButton.Yes:
                 shot.workflows.remove(workflow)
+                self.pruneInvalidConnections(shot)
                 self.refreshWorkflowsList(shot)
                 while self.workflowParamsLayout.rowCount() > 0:
                     self.workflowParamsLayout.removeRow(0)
                 self.workflowParamsGroup.setEnabled(False)
                 # QMessageBox.information(self, "Info", "Workflow removed from the shot.")
                 self.refreshParamsList(shot)
+                self.refreshNodeEditor()
     @Slot()
     def onSaveWorkflowDefaults(self):
         selected_item = self.workflowListWidget.currentItem()
@@ -902,6 +1040,8 @@ class ComfyStudioBase:
             new_workflow = copy.deepcopy(selected_workflow)
             new_workflow.enabled = True  # Ensure the workflow is enabled
             new_shot.workflows.append(new_workflow)
+            # The deepcopy duplicated a uid already present in this shot.
+            ensure_unique_workflow_uids(new_shot)
 
             # Append the new shot to the shots list
             self.shots.append(new_shot)

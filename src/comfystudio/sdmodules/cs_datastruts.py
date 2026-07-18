@@ -1,8 +1,44 @@
 #!/usr/bin/env python
 
+import uuid
+
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
 import cv2
+
+# Reserved port id for a workflow node's implicit rendered-output port in the
+# shot workflow graph. Never stored in a param dict.
+RESULT_PORT = "__result__"
+
+
+def workflow_param_port_id(param: Dict[str, Any]) -> str:
+    """
+    Stable port identity for a workflow parameter: name + owning node ids.
+    Matches the (name, nodeIDs) identity used by syncWorkflowFromFile, so port
+    ids survive workflow file resyncs.
+    """
+    return f"{param.get('name', '')}@{','.join(str(n) for n in param.get('nodeIDs', []))}"
+
+
+def default_shot_graph() -> Dict[str, Any]:
+    return {"connections": [], "positions": {}}
+
+
+def ensure_unique_workflow_uids(shot: 'Shot') -> bool:
+    """
+    Repairs missing/duplicated workflow uids WITHIN one shot (deepcopied
+    assignments share uids). Cross-shot duplicates are fine — connections are
+    shot-internal — so uids must never be used as global keys.
+    """
+    seen = set()
+    changed = False
+    for wf in shot.workflows:
+        if not wf.uid or wf.uid in seen:
+            wf.uid = uuid.uuid4().hex
+            changed = True
+        seen.add(wf.uid)
+    return changed
+
 
 @dataclass
 class WorkflowAssignment:
@@ -14,6 +50,15 @@ class WorkflowAssignment:
     versions: List[Dict[str, Any]] = field(default_factory=list)  # New field for version snapshots
     # Index of the version currently selected in the UI dropdown (0 == placeholder / latest params).
     selected_version_index: int = 0
+    # Stable identity within a shot (graph connections reference it).
+    uid: str = ""
+    # Most recent rendered output of this workflow (the graph "Result" port).
+    lastOutput: str = ""
+    lastOutputIsVideo: bool = False
+
+    def __post_init__(self):
+        if not self.uid:
+            self.uid = uuid.uuid4().hex
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -23,7 +68,10 @@ class WorkflowAssignment:
             "isVideo": self.isVideo,
             "lastSignature": self.lastSignature,
             "versions": self.versions,  # Include versions when serializing
-            "selected_version_index": self.selected_version_index
+            "selected_version_index": self.selected_version_index,
+            "uid": self.uid,
+            "lastOutput": self.lastOutput,
+            "lastOutputIsVideo": self.lastOutputIsVideo
         }
 
     @classmethod
@@ -35,7 +83,10 @@ class WorkflowAssignment:
             isVideo=data.get('isVideo', False),
             lastSignature=data.get('lastSignature', ""),
             versions=data.get('versions', []),  # Load versions if present
-            selected_version_index=data.get('selected_version_index', 0)
+            selected_version_index=data.get('selected_version_index', 0),
+            uid=data.get('uid', ""),  # empty -> __post_init__ generates one
+            lastOutput=data.get('lastOutput', ""),
+            lastOutputIsVideo=data.get('lastOutputIsVideo', False)
         )
 
     def get(self, name, default=None):
@@ -57,6 +108,11 @@ class Shot:
     lastVideoSignature: str = ""
     workflows: List[WorkflowAssignment] = field(default_factory=list)
     params: List[Dict[str, Any]] = field(default_factory=list)
+    # Shot workflow graph: {"connections": [{"from": {"wf": uid, "port": id},
+    # "to": {"wf": uid, "port": id}}], "positions": {uid: [x, y]}}.
+    # Port ids come from workflow_param_port_id(); RESULT_PORT is the implicit
+    # rendered-output port of each workflow node.
+    graph: Dict[str, Any] = field(default_factory=default_shot_graph)
     # Remove the raw "duration" field from the initializer.
     # Instead, we use a default fallback duration (in seconds) if video cannot be read.
     default_duration: int = 5
@@ -133,6 +189,7 @@ class Shot:
             "lastVideoSignature": self.lastVideoSignature,
             "workflows": [workflow.to_dict() for workflow in self.workflows],
             "params": self.params,
+            "graph": self.graph,
             "duration": self.raw_duration,  # untrimmed source duration (fallback when file is unreadable)
             "inPoint": self.inPoint,
             "outPoint": self.outPoint,
@@ -145,7 +202,12 @@ class Shot:
     def from_dict(cls, data: Dict[str, Any]) -> 'Shot':
         workflows_data = data.get('workflows', [])
         workflows = [WorkflowAssignment.from_dict(wf) for wf in workflows_data]
-        return cls(
+        graph = data.get('graph') or default_shot_graph()
+        if not isinstance(graph, dict):
+            graph = default_shot_graph()
+        graph.setdefault("connections", [])
+        graph.setdefault("positions", {})
+        shot = cls(
             name=data.get('name', "Unnamed Shot"),
             videoPath=data.get('videoPath', ""),
             videoVersions=data.get('videoVersions', []),
@@ -157,6 +219,7 @@ class Shot:
             lastVideoSignature=data.get('lastVideoSignature', ""),
             workflows=workflows,
             params=data.get('params', []),
+            graph=graph,
             default_duration=data.get('duration', 5),
             inPoint=data.get('inPoint', 0.0),
             outPoint=data.get('outPoint', 1.0),
@@ -164,6 +227,8 @@ class Shot:
             thumbnail_path=data.get('thumbnail_path', ""),
             fps=data.get('fps', 24.0)
         )
+        ensure_unique_workflow_uids(shot)
+        return shot
 
     def get(self, var, default=""):
         try:

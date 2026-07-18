@@ -166,6 +166,31 @@ def _get_registry():
                 param["global_var"] = dyn_param.global_var
                 QMessageBox.information(window, "Info", "Dynamic parameter updated.")
 
+        def expose_graph_input(window, param):
+            param["graphInput"] = True
+            if hasattr(window, "setProjectModified"):
+                window.setProjectModified(True)
+            if hasattr(window, "refreshNodeEditor"):
+                window.refreshNodeEditor()
+
+        def expose_graph_output(window, param):
+            param["graphOutput"] = True
+            if hasattr(window, "setProjectModified"):
+                window.setProjectModified(True)
+            if hasattr(window, "refreshNodeEditor"):
+                window.refreshNodeEditor()
+
+        def remove_graph_ports(window, param):
+            param.pop("graphInput", None)
+            param.pop("graphOutput", None)
+            # Connections to a removed port are meaningless.
+            if hasattr(window, "removeParamPortConnections"):
+                window.removeParamPortConnections(param)
+            if hasattr(window, "setProjectModified"):
+                window.setProjectModified(True)
+            if hasattr(window, "refreshNodeEditor"):
+                window.refreshNodeEditor()
+
         # Initialize the registry with default action specs.
         # For "string" parameters we include the first three actions,
         # while the remaining three are common (available for both string and non-string).
@@ -203,6 +228,21 @@ def _get_registry():
             {
                 "text": "Import Files for Parameter",
                 "callback": import_files_for_param,
+                "param_types": ["string", "other"]
+            },
+            {
+                "text": "Expose as Graph Input",
+                "callback": expose_graph_input,
+                "param_types": ["string", "other"]
+            },
+            {
+                "text": "Expose as Graph Output",
+                "callback": expose_graph_output,
+                "param_types": ["string", "other"]
+            },
+            {
+                "text": "Remove Graph Ports",
+                "callback": remove_graph_ports,
                 "param_types": ["string", "other"]
             }
         ]

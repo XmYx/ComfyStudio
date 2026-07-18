@@ -39,6 +39,7 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 | `sdmodules/core/comfyhandler.py` | Render queue, ComfyUI HTTP submission, result download, versions |
 | `sdmodules/new_widget.py` | Shot Library + multitrack Timeline + timeline export (`ShotManagerWidget`) |
 | `sdmodules/preview_dock.py` | Per-shot render preview (QMediaPlayer) |
+| `sdmodules/shot_node_editor.py` | Shot workflow graph dock (node editor for chaining workflows) |
 | `sdmodules/workflow_edit_server.py` | Localhost bridge for save-back from embedded ComfyUI |
 | `sdmodules/workflow_browser.py` | ComfyUI-examples scraper/import dialog (File → Import Example Workflows) |
 | `sdmodules/qss.py` | `dark_qss` / `light_qss`, `get_stylesheet(theme)` |
@@ -59,6 +60,37 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 - `WorkflowAssignment.selected_version_index` persists which version dropdown entry
   is active; version snapshots live in `versions` (`{params, output, is_video, timestamp}`).
   Restoring a version deep-copies `params` — never assign the snapshot by reference.
+- `WorkflowAssignment.uid` is a stable identity **within one shot** (generated in
+  `__post_init__`, repaired by `ensure_unique_workflow_uids(shot)` after deepcopies —
+  called from `Shot.from_dict`, `addWorkflowToShot`, `extendClip`). Deepcopied shots
+  (duplicates, timeline clips) legitimately share uids across shots — never use a uid
+  as a global key. Match assignments by `uid`, not `path` (a shot can hold the same
+  file twice).
+- `WorkflowAssignment.lastOutput` / `lastOutputIsVideo` = most recent rendered output
+  (set in `onComfyResult`, backfilled from `versions` by `_latestWorkflowOutput`).
+
+## Shot workflow graph (node editor)
+
+- `Shot.graph = {"connections": [...], "positions": {uid: [x, y]}}`. A connection is
+  `{"from": {"wf": uid, "port": id}, "to": {"wf": uid, "port": id}}` where a port id is
+  `workflow_param_port_id(param)` (= `name@nodeIDs`, the same identity
+  `syncWorkflowFromFile` merges by) or the reserved `RESULT_PORT` (`"__result__"`,
+  output-only: the workflow's rendered file). Connections are **within one shot only**.
+- Params opt into ports via `graphInput` / `graphOutput` flags (a param may be both);
+  these flags are in `syncWorkflowFromFile`'s preserve list and the defaults merge —
+  keep them there when adding new port-related keys.
+- Render order = `topoSortedWorkflowIndices` (Kahn, list-index tie-break; cycle →
+  warning + list-order fallback). `resolveGraphInputs` fills connected params before
+  the signature is computed; legacy `usePrevResultImage/Video` flags remain honored as
+  a fallback for ports the graph didn't satisfy. `computeWorkflowSignature` includes
+  the connections so re-wiring invalidates cached outputs.
+- Old projects: `migrateShotGraph(shot)` (called per shot in `openProjectFromPath`,
+  idempotent — no-op when connections exist) converts prev-result flags into Result
+  connections from the previous **enabled** workflow; the flags are kept so older
+  builds still chain.
+- After removing workflows or params, call `pruneInvalidConnections(shot)`; the dock
+  (`shot_node_editor.py`, objectName `shot_node_editor_dock`) rebuilds via
+  `refreshNodeEditor()` and skips rebuilds while hidden (`_dirty` + `showEvent`).
 
 ## Workflows (ComfyUI)
 
@@ -73,6 +105,11 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
   workflow, and `executeWorkflow`'s prev-result overrides feed `shot.stillPath` /
   `shot.videoPath` based on what the param asks for (`usePrevResultImage/Video`), not on
   the previous workflow's declared `isVideo`.
+- The UI lists workflows in **one** combo (`workflowCombo`, filled by `loadWorkflows`
+  with the deduped union of both library dirs). `isVideo` is only a hint (output
+  subfolder naming); the real result type is detected in `onComfyResult`. Keep the
+  `image_workflows`/`video_workflows` attributes and the `addWorkflowToShot(path,
+  isVideo=)` signature — `plugins/wizard.py` depends on them.
 - Example import (`workflow_browser.py`): parses the examples site with stdlib
   `HTMLParser`; extracts embedded workflows from PNG tEXt/iTXt/zTXt chunks and, as a
   fallback (webp/EXIF), by scanning for `prompt:{`/`workflow:{` markers with
@@ -102,6 +139,13 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 
 - All time↔pixel mapping goes through `timeToX`/`xToTime` (respects `scale` px/sec and
   `time_offset` pan). Ctrl+wheel zooms around the cursor; plain wheel pans.
+- The navigator handle is **derived state**: `scale`/`time_offset` are the single
+  source of truth and `TimelineNavigator.syncFromTimeline()` recomputes the rect
+  (call it after anything that changes zoom/pan/`timeline_end`/widget size — see
+  `_syncNavigator()` call sites). Navigator → timeline goes through
+  `onNavigatorRangeChanged` (guarded by `_syncingNavigator`, zoom clamped to the same
+  [2, 2000] as Ctrl+wheel). Drag = pan, edge-drag = zoom (both edges), empty-area
+  click = center-pan; a plain click must never change the zoom.
 - Drag & drop payload (`application/x-shot`) round-trips through `Shot.to_dict`-style
   dicts and `Shot.from_dict` — **never** `Shot(**dict)` (the `duration` key is not a
   constructor arg).

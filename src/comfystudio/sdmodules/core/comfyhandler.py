@@ -24,7 +24,7 @@ from qtpy.QtWidgets import (
 )
 
 from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
-from comfystudio.sdmodules.cs_datastruts import Shot
+from comfystudio.sdmodules.cs_datastruts import RESULT_PORT, Shot, workflow_param_port_id
 from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
 
 
@@ -175,17 +175,19 @@ class ComfyStudioComfyHandler:
                 if idx is not None and isinstance(idx, int) and 0 <= idx < len(self.shots):
                     self.renderQueue.append(idx)
         elif chosen_mode == 'per_workflow':
-            # Enqueue workflows in an interleaved manner across selected shots
+            # Enqueue workflows interleaved across selected shots, each shot's
+            # workflows in graph (topological) order.
             selected_indices = [
                 it.data(Qt.ItemDataRole.UserRole) for it in selected_items
                 if it.data(Qt.ItemDataRole.UserRole) is not None and isinstance(it.data(Qt.ItemDataRole.UserRole), int)
             ]
-            max_workflows = max(len(self.shots[idx].workflows) for idx in selected_indices)
-            for wf_idx in range(max_workflows):
+            orders = {idx: self.topoSortedWorkflowIndices(self.shots[idx]) for idx in selected_indices}
+            max_workflows = max((len(o) for o in orders.values()), default=0)
+            for k in range(max_workflows):
                 for shot_idx in selected_indices:
-                    shot = self.shots[shot_idx]
-                    if wf_idx < len(shot.workflows) and shot.workflows[wf_idx].enabled:
-                        self.renderQueue.append((shot_idx, wf_idx))
+                    order = orders[shot_idx]
+                    if k < len(order):
+                        self.renderQueue.append((shot_idx, order[k]))
         else:
             QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
             return
@@ -227,12 +229,14 @@ class ComfyStudioComfyHandler:
             for idx in range(len(self.shots)):
                 self.renderQueue.append(idx)
         elif chosen_mode == 'per_workflow':
-            # Enqueue workflows in an interleaved manner across all shots
-            max_workflows = max(len(shot.workflows) for shot in self.shots)
-            for wf_idx in range(max_workflows):
-                for shot_idx, shot in enumerate(self.shots):
-                    if wf_idx < len(shot.workflows) and shot.workflows[wf_idx].enabled:
-                        self.renderQueue.append((shot_idx, wf_idx))
+            # Enqueue workflows interleaved across all shots, each shot's
+            # workflows in graph (topological) order.
+            orders = [self.topoSortedWorkflowIndices(shot) for shot in self.shots]
+            max_workflows = max((len(o) for o in orders), default=0)
+            for k in range(max_workflows):
+                for shot_idx, order in enumerate(orders):
+                    if k < len(order):
+                        self.renderQueue.append((shot_idx, order[k]))
         else:
             # QMessageBox.warning(self, "Warning", f"Unknown render mode: {chosen_mode}")
             return
@@ -262,11 +266,117 @@ class ComfyStudioComfyHandler:
         self.executeWorkflow(self.shotInProgress, currentWorkflowIndex)
     def initWorkflowQueueForShot(self, shotIndex):
         shot = self.shots[shotIndex]
-        wIndices = []
-        for i, wf in enumerate(shot.workflows):
-            if wf.enabled:
-                wIndices.append(i)
-        self.workflowQueue[shotIndex] = wIndices
+        self.workflowQueue[shotIndex] = self.topoSortedWorkflowIndices(shot)
+
+    def topoSortedWorkflowIndices(self, shot: Shot) -> List[int]:
+        """
+        Render order for a shot's enabled workflows: topological order of the
+        shot graph, tie-broken by list index (no connections -> plain list
+        order). On a cycle, warns and falls back to list order for the
+        remaining workflows instead of aborting.
+        """
+        enabled = [i for i, wf in enumerate(shot.workflows) if wf.enabled]
+        uid_to_idx = {shot.workflows[i].uid: i for i in enabled}
+        deps = {i: set() for i in enabled}
+        for conn in shot.graph.get("connections", []):
+            src = uid_to_idx.get(conn.get("from", {}).get("wf"))
+            dst = uid_to_idx.get(conn.get("to", {}).get("wf"))
+            if src is None or dst is None or src == dst:
+                continue
+            deps[dst].add(src)
+
+        order = []
+        remaining = set(enabled)
+        while remaining:
+            ready = [i for i in sorted(remaining) if not (deps[i] & remaining)]
+            if not ready:
+                logging.warning(f"Workflow graph of shot '{shot.name}' contains a cycle; "
+                                f"falling back to list order.")
+                if hasattr(self, "status_widgets"):
+                    self.status_widgets["statusMessage"].setText(
+                        "Workflow graph contains a cycle — using list order for remaining workflows.")
+                order.extend(sorted(remaining))
+                break
+            order.append(ready[0])
+            remaining.discard(ready[0])
+        return order
+
+    def resolveGraphInputs(self, shot: Shot, workflow) -> set:
+        """
+        Fills this workflow's params from the shot graph connections targeting
+        it. Returns the set of satisfied port ids so the legacy prev-result
+        fallback can skip them. Mutates param values in place (same semantics
+        as the legacy substitution, so signatures/version reuse keep working).
+        """
+        resolved = set()
+        connections = shot.graph.get("connections", [])
+        if not connections:
+            return resolved
+        by_uid = {wf.uid: wf for wf in shot.workflows}
+        by_port = {workflow_param_port_id(p): p
+                   for p in workflow.parameters.get("params", [])}
+        for conn in connections:
+            dst = conn.get("to", {})
+            if dst.get("wf") != workflow.uid:
+                continue
+            param = by_port.get(dst.get("port"))
+            src = conn.get("from", {})
+            src_wf = by_uid.get(src.get("wf"))
+            if param is None or src_wf is None:
+                continue
+            if src.get("port") == RESULT_PORT:
+                value = self._latestWorkflowOutput(shot, src_wf, param)
+                if value is None:
+                    logging.info(f"Graph input '{param['name']}' has no rendered source output "
+                                 f"yet (from '{os.path.basename(src_wf.path)}').")
+                    continue
+            else:
+                src_param = next(
+                    (p for p in src_wf.parameters.get("params", [])
+                     if workflow_param_port_id(p) == src.get("port")),
+                    None
+                )
+                if src_param is None:
+                    continue
+                value = self._coerceParamValue(src_param.get("value"), param.get("type", "string"))
+            print(f"[DEBUG] Graph override: '{param['name']}' <- "
+                  f"'{src.get('port')}' of '{os.path.basename(src_wf.path)}' = {value}")
+            param["value"] = value
+            resolved.add(dst.get("port"))
+        return resolved
+
+    @staticmethod
+    def _latestWorkflowOutput(shot: Shot, src_wf, target_param):
+        """Best existing file for a workflow's Result port, or None."""
+        if src_wf.lastOutput and os.path.exists(src_wf.lastOutput):
+            return src_wf.lastOutput
+        for version in reversed(src_wf.versions):
+            out = version.get("output")
+            if out and os.path.exists(out):
+                # Backfill for projects saved before lastOutput existed.
+                src_wf.lastOutput = out
+                src_wf.lastOutputIsVideo = bool(version.get("is_video"))
+                return out
+        # Last resort: the shot-level outputs (pre-graph projects).
+        want_video = src_wf.lastOutputIsVideo or bool(target_param.get("usePrevResultVideo"))
+        candidates = [shot.videoPath, shot.stillPath] if want_video else [shot.stillPath, shot.videoPath]
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+        return None
+
+    @staticmethod
+    def _coerceParamValue(value, ptype):
+        try:
+            if ptype == "int":
+                return int(value)
+            if ptype == "float":
+                return float(value)
+            if ptype == "bool":
+                return bool(value) and str(value).lower() not in ("false", "0", "")
+            return "" if value is None else str(value)
+        except (TypeError, ValueError):
+            return value
     def computeWorkflowSignature(self, shot: Shot, workflowIndex: int) -> str:
 
         import hashlib, json
@@ -276,7 +386,9 @@ class ComfyStudioComfyHandler:
             "shotParams": shot.params,  # all shot params
             "workflowParams": workflow.parameters,
             "workflowPath": workflow.path,
-            "isVideo": workflow.isVideo
+            "isVideo": workflow.isVideo,
+            # Re-wiring the shot graph must invalidate cached outputs.
+            "graphConnections": shot.graph.get("connections", [])
         }
         signature_str = json.dumps(data_struct, sort_keys=True)
         return hashlib.md5(signature_str.encode("utf-8")).hexdigest()
@@ -317,6 +429,37 @@ class ComfyStudioComfyHandler:
         shot = self.shots[shotIndex]
         workflow = shot.workflows[workflowIndex]
         isVideo = workflow.isVideo
+        wf_params = workflow.parameters.get("params", [])
+
+        # Resolve dynamic inputs BEFORE computing the signature so the reuse
+        # checks below compare the values that will actually be rendered.
+        # Graph connections win; legacy prev-result flags fill whatever the
+        # graph didn't satisfy.
+        graph_resolved = self.resolveGraphInputs(shot, workflow)
+        if self.render_mode == 'per_shot':
+            if self.workflowIndexInProgress > 0:
+                prevWorkflowIndex = self.workflowQueue.get(shotIndex, [])[self.workflowIndexInProgress - 1]
+            else:
+                prevWorkflowIndex = None
+        else:
+            prevWorkflowIndex = workflowIndex - 1 if workflowIndex > 0 else None
+        if prevWorkflowIndex is not None:
+            # The chain may mix image and video workflows in any order: a param
+            # asking for the previous image gets the shot's latest still and one
+            # asking for the previous video gets the latest video, regardless of
+            # what type the immediately preceding workflow was declared as.
+            prevVideo = shot.videoPath if (shot.videoPath and os.path.exists(shot.videoPath)) else None
+            prevImage = shot.stillPath if (shot.stillPath and os.path.exists(shot.stillPath)) else None
+            for param in wf_params:
+                if workflow_param_port_id(param) in graph_resolved:
+                    continue
+                if param.get("usePrevResultImage") and prevImage:
+                    print(f"[DEBUG] Setting param '{param['name']}' to prevImage: {prevImage}")
+                    param["value"] = prevImage
+                if param.get("usePrevResultVideo") and prevVideo:
+                    print(f"[DEBUG] Setting param '{param['name']}' to prevVideo: {prevVideo}")
+                    param["value"] = prevVideo
+
         currentSignature = self.computeWorkflowSignature(shot, workflowIndex)
 
         # First, check if an identical version already exists.
@@ -409,40 +552,13 @@ class ComfyStudioComfyHandler:
 
         # Prepare any param overrides for workflow_json if needed
         local_params = copy.deepcopy(shot.params)
-        wf_params = workflow.parameters.get("params", [])
 
         print("[DEBUG] Original workflow JSON keys:")
         for k in workflow_json.keys():
             print("       ", k)
 
-        # Apply dynamic overrides based on render mode
-        if self.render_mode in ['per_shot', 'per_workflow']:
-            if self.render_mode == 'per_shot':
-                if self.workflowIndexInProgress > 0:
-                    prevWorkflowIndex = self.workflowQueue.get(shotIndex, [])[self.workflowIndexInProgress - 1]
-                else:
-                    prevWorkflowIndex = None
-            elif self.render_mode == 'per_workflow':
-                if workflowIndex > 0:
-                    prevWorkflowIndex = workflowIndex - 1
-                else:
-                    prevWorkflowIndex = None
-            if prevWorkflowIndex is not None:
-                # The chain may mix image and video workflows in any order: a param
-                # asking for the previous image gets the shot's latest still and one
-                # asking for the previous video gets the latest video, regardless of
-                # what type the immediately preceding workflow was declared as.
-                prevVideo = shot.videoPath if (shot.videoPath and os.path.exists(shot.videoPath)) else None
-                prevImage = shot.stillPath if (shot.stillPath and os.path.exists(shot.stillPath)) else None
-                for param in wf_params:
-                    if param.get("usePrevResultImage") and prevImage:
-                        print(f"[DEBUG] Setting param '{param['name']}' to prevImage: {prevImage}")
-                        param["value"] = prevImage
-                    if param.get("usePrevResultVideo") and prevVideo:
-                        print(f"[DEBUG] Setting param '{param['name']}' to prevVideo: {prevVideo}")
-                        param["value"] = prevVideo
-
         # Override workflow_json with local_params + wf_params
+        # (dynamic values were already resolved above, before the signature)
         for node_id, node_data in workflow_json.items():
             inputs_dict = node_data.get("inputs", {})
             meta_title = node_data.get("_meta", {}).get("title", "").lower()
@@ -614,6 +730,9 @@ class ComfyStudioComfyHandler:
                 }
 
                 workflow.versions.append(new_version)
+                # This workflow's Result port (feeds graph connections).
+                workflow.lastOutput = new_full
+                workflow.lastOutputIsVideo = (final_is_video or workflow.isVideo)
 
                 # Mark this workflow's own signature, so we don't re-render if nothing changed
                 workflow.lastSignature = self.computeRenderSignature(shot, isVideo=workflow.isVideo)

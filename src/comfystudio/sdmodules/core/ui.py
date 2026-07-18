@@ -113,6 +113,20 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         self.togglePreviewDockAct.triggered.connect(self.previewDock.setVisible)
         self.windowsMenu.addAction(self.togglePreviewDockAct)
 
+        # Action to toggle the Shot Workflow Graph dock (node editor)
+        if hasattr(self, "shotNodeEditorDock"):
+            self.toggleShotNodeEditorAct = QAction(
+                self.localization.translate("menu_toggle_shot_node_editor",
+                                            default="Toggle Workflow Graph"),
+                self,
+                checkable=True
+            )
+            self.toggleShotNodeEditorAct.setChecked(self.shotNodeEditorDock.isVisible())
+            self.toggleShotNodeEditorAct.triggered.connect(self.shotNodeEditorDock.setVisible)
+            # Keep the check state honest when the dock is closed directly.
+            self.shotNodeEditorDock.visibilityChanged.connect(self.toggleShotNodeEditorAct.setChecked)
+            self.windowsMenu.addAction(self.toggleShotNodeEditorAct)
+
         # Action to toggle Web Browser dock (only when QtWebEngine is available)
         try:
             from qtpy.QtWebEngineWidgets import QWebEngineView
@@ -583,48 +597,28 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
 
         self.workflowGroupBox.toggled.connect(onWorkflowsToggled)
 
-        comboLayout_1 = QHBoxLayout()
-        comboLayout_2 = QHBoxLayout()
-
-        self.imageWorkflowLabel = QLabel(
-            self.localization.translate("label_image_workflow", default="Image Workflow:")
+        # Workflows are type-agnostic: one unified list (image + video library
+        # directories combined); the rendered result type is detected at runtime.
+        comboLayout = QHBoxLayout()
+        self.workflowLabel = QLabel(
+            self.localization.translate("label_workflow", default="Workflow:")
         )
-        self.imageWorkflowCombo = QComboBox()
-        self.imageWorkflowCombo.setToolTip(
-            self.localization.translate("tooltip_select_image_workflow", default="Select an Image Workflow to add")
+        self.workflowCombo = QComboBox()
+        self.workflowCombo.setToolTip(
+            self.localization.translate("tooltip_select_workflow", default="Select a workflow to add")
         )
-        self.addImageWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_image_workflow", default="Add")
+        self.addWorkflowBtn = QPushButton(
+            self.localization.translate("button_add_workflow", default="Add")
         )
-        self.addImageWorkflowBtn.setToolTip(
-            self.localization.translate("tooltip_add_image_workflow",
-                                        default="Add the selected Image Workflow to the shot")
+        self.addWorkflowBtn.setToolTip(
+            self.localization.translate("tooltip_add_workflow",
+                                        default="Add the selected workflow to the shot")
         )
-        self.addImageWorkflowBtn.clicked.connect(self.addImageWorkflow)
-        comboLayout_1.addWidget(self.imageWorkflowLabel)
-        comboLayout_1.addWidget(self.imageWorkflowCombo)
-        comboLayout_1.addWidget(self.addImageWorkflowBtn)
-        # comboLayout.addSpacing(20)
-        self.videoWorkflowLabel = QLabel(
-            self.localization.translate("label_video_workflow", default="Video:")
-        )
-        self.videoWorkflowCombo = QComboBox()
-        self.videoWorkflowCombo.setToolTip(
-            self.localization.translate("tooltip_select_video_workflow", default="Select a Video Workflow to add")
-        )
-        self.addVideoWorkflowBtn = QPushButton(
-            self.localization.translate("button_add_video_workflow", default="Add")
-        )
-        self.addVideoWorkflowBtn.setToolTip(
-            self.localization.translate("tooltip_add_video_workflow",
-                                        default="Add the selected Video Workflow to the shot")
-        )
-        self.addVideoWorkflowBtn.clicked.connect(self.addVideoWorkflow)
-        comboLayout_2.addWidget(self.videoWorkflowLabel)
-        comboLayout_2.addWidget(self.videoWorkflowCombo)
-        comboLayout_2.addWidget(self.addVideoWorkflowBtn)
-        groupLayout.addLayout(comboLayout_1)
-        groupLayout.addLayout(comboLayout_2)
+        self.addWorkflowBtn.clicked.connect(self.addWorkflow)
+        comboLayout.addWidget(self.workflowLabel)
+        comboLayout.addWidget(self.workflowCombo)
+        comboLayout.addWidget(self.addWorkflowBtn)
+        groupLayout.addLayout(comboLayout)
 
         self.workflowListLabel = QLabel(
             self.localization.translate("label_workflow_list", default="Assigned Workflows:")
@@ -751,6 +745,19 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             QApplication.instance().setLayoutDirection(Qt.RightToLeft)
         else:
             QApplication.instance().setLayoutDirection(Qt.LeftToRight)
+    def updateWorkflowsTabTexts(self):
+        """Retranslates the Workflows tab labels (unified workflow combo)."""
+        self.workflowLabel.setText(
+            self.localization.translate("label_workflow", default="Workflow:"))
+        self.addWorkflowBtn.setText(
+            self.localization.translate("button_add_workflow", default="Add"))
+        self.workflowListLabel.setText(
+            self.localization.translate("label_workflow_list", default="Assigned Workflows:"))
+        self.removeWorkflowBtn.setText(
+            self.localization.translate("button_remove_workflow", default="Remove Workflow"))
+        self.toggleHiddenParamsBtn.setText(
+            self.localization.translate("button_toggle_hidden_params", default="Show/Hide All Params"))
+
     def updateMenuBarTexts(self):
 
         # Update File Menu Title
@@ -808,6 +815,15 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.localization.translate("tooltip_toggle_preview_dock", default="Show or hide the Preview Dock")
         )
 
+        if hasattr(self, "toggleShotNodeEditorAct"):
+            self.toggleShotNodeEditorAct.setText(
+                self.localization.translate("menu_toggle_shot_node_editor", default="Toggle Workflow Graph")
+            )
+            self.toggleShotNodeEditorAct.setToolTip(
+                self.localization.translate("tooltip_toggle_shot_node_editor",
+                                            default="Show or hide the shot workflow graph editor")
+            )
+
         if hasattr(self, "toggleWebBrowserAct"):
             self.toggleWebBrowserAct.setText(
                 self.localization.translate("menu_toggle_webbrowser", default="Toggle Web Browser")
@@ -831,6 +847,10 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                     raise ValueError("Project file is not a valid ComfyStudio project (expected a JSON object).")
                 shots_data = project_data.get("shots", [])
                 self.shots = [Shot.from_dict(shot_dict) for shot_dict in shots_data]
+                # Convert legacy prev-result flags into shot graph connections.
+                migrated_any = False
+                for shot in self.shots:
+                    migrated_any = self.migrateShotGraph(shot) or migrated_any
                 self.currentShotIndex = 0 if self.shots else -1
                 self.lastSelectedWorkflowIndex = {}
                 # Watch every referenced workflow file for external edits.
@@ -855,7 +875,9 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                     f"{self.localization.translate('status_loaded_from', default='Project loaded from')} {filePath}")
                 self.fillDock()
                 self.addToRecents(filePath)
-                self.setProjectModified(False)
+                # Migration created new connections worth saving; otherwise
+                # a freshly opened project is unmodified.
+                self.setProjectModified(migrated_any)
             except Exception as e:
                 QMessageBox.warning(self, self.localization.translate("dialog_error_title", default="Error"),
                                     self.localization.translate("error_failed_to_load_project",
@@ -872,6 +894,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         shot = self.shots[self.currentShotIndex]
         self.refreshWorkflowsList(shot)
         self.refreshParamsList(shot)
+        self.refreshNodeEditor()
 
     def clearDock(self):
         print("clearDock was called")
@@ -881,6 +904,7 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.workflowParamsLayout.removeRow(0)
         self.workflowParamsGroup.setEnabled(False)
         self.paramsListWidget.clear()
+        self.refreshNodeEditor()
 
     def createWorkflowVersionDropdown(self, workflow):
         """
@@ -1092,24 +1116,34 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 logging.warning(f"Cannot list workflow directory '{directory}': {e}")
             return found
 
+        # Kept as separate attributes for plugin compatibility (wizard plugin
+        # reads image_workflows/video_workflows).
         self.image_workflows = collect_workflows(image_dir)
         self.video_workflows = collect_workflows(video_dir)
 
-        # Fill combos, preserving the current selection when possible.
-        def refill(combo, workflows):
-            previous = combo.currentData()
-            combo.blockSignals(True)
-            combo.clear()
-            for wf in workflows:
-                combo.addItem(os.path.basename(wf), userData=wf)
-            if previous:
-                idx = combo.findData(previous)
-                if idx != -1:
-                    combo.setCurrentIndex(idx)
-            combo.blockSignals(False)
+        # One type-agnostic list, deduped by absolute path.
+        combined = []
+        seen = set()
+        for wf in self.image_workflows + self.video_workflows:
+            key = os.path.abspath(wf)
+            if key not in seen:
+                seen.add(key)
+                combined.append(wf)
+        combined.sort(key=lambda p: os.path.basename(p).lower())
 
-        refill(self.imageWorkflowCombo, self.image_workflows)
-        refill(self.videoWorkflowCombo, self.video_workflows)
+        previous = self.workflowCombo.currentData()
+        self.workflowCombo.blockSignals(True)
+        self.workflowCombo.clear()
+        for wf in combined:
+            self.workflowCombo.addItem(os.path.basename(wf), userData=wf)
+            # Full path as tooltip disambiguates same-named files.
+            self.workflowCombo.setItemData(self.workflowCombo.count() - 1, wf,
+                                           Qt.ItemDataRole.ToolTipRole)
+        if previous:
+            idx = self.workflowCombo.findData(previous)
+            if idx != -1:
+                self.workflowCombo.setCurrentIndex(idx)
+        self.workflowCombo.blockSignals(False)
 
     def loadPlugins(self):
         plugins_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "plugins")

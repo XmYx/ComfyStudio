@@ -203,6 +203,15 @@ class ShotPreviewDock(QDockWidget):
             self.showNoMedia(f"{shot.name} (Invalid wf index)")
             return
         wfa = shot.workflows[wfIndex]
+        # Prefer this workflow's own rendered output (type-agnostic chains):
+        # the declared isVideo flag is only a hint and may not match reality.
+        last_output = getattr(wfa, "lastOutput", "")
+        if last_output and os.path.exists(last_output):
+            if getattr(wfa, "lastOutputIsVideo", False):
+                self.showVideo(last_output, f"{shot.name} (WF {wfIndex+1})")
+            else:
+                self.showImage(last_output, f"{shot.name} (WF {wfIndex+1})")
+            return
         if wfa.isVideo:
             print("Trying to show video")
             if shot.videoPath and os.path.exists(shot.videoPath):

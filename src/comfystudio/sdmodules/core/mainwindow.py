@@ -149,6 +149,20 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         self.previewDock.setObjectName("preview_dock")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.previewDock)
 
+        # Shot workflow graph (node editor) dock — hidden by default,
+        # toggled from the Windows menu.
+        from comfystudio.sdmodules.shot_node_editor import ShotNodeEditorWidget
+        self.shotNodeEditorDock = QDockWidget(
+            self.localization.translate("dock_shot_node_editor", default="Shot Workflow Graph"),
+            self
+        )
+        self.shotNodeEditorDock.setObjectName("shot_node_editor_dock")
+        self.shotNodeEditorDock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.shotNodeEditor = ShotNodeEditorWidget(self)
+        self.shotNodeEditorDock.setWidget(self.shotNodeEditor)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.shotNodeEditorDock)
+        self.shotNodeEditorDock.hide()
+
         menu_config = {
             "File": {
                 "title": "File",
@@ -249,6 +263,8 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
         self.workflowSelected.connect(self.previewDock.onWorkflowSelected)
         self.shotRenderComplete.connect(self.previewDock.onShotRenderComplete)
         self.shotRenderComplete.connect(self.onRenderComplete)
+        self.shotSelected.connect(lambda _idx: self.refreshNodeEditor())
+        self.shotRenderComplete.connect(lambda *_a: self.refreshNodeEditor())
         self.createWindowsMenu()
 
     def process_api_request(self, endpoint_config, image_data):
@@ -701,7 +717,9 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             return
         shot = self.shots[self.currentShotIndex]
         for wf in shot.workflows:
-            if wf.path == workflow.path:
+            # Match by identity (uid) — the same workflow file may be assigned
+            # to a shot more than once. Path is only a legacy fallback.
+            if (wf.uid and wf.uid == workflow.uid) or (not wf.uid and wf.path == workflow.path):
                 wf.parameters = workflow.parameters
                 break
         self.saveCurrentWorkflowParams()
