@@ -548,31 +548,41 @@ class WorkflowBrowserDialog(QDialog):
         is_video = bool(self.typeCombo.currentData())
         saved = []
 
-        # 1) API format into the ComfyStudio library (usable by shots directly).
+        # 1) API format (usable by shots directly) — into ComfyUI's own
+        # workflow folder when an install is configured, so the embedded
+        # ComfyUI sees the same library as ComfyStudio's listing. Falls back
+        # to the legacy image/video library dirs otherwise.
         if workflows["api"]:
-            image_dir, video_dir = self.main.workflowLibraryDirs()
-            lib_dir = video_dir if is_video else image_dir
+            lib_dir = None
+            dest_label = "ComfyUI workflows"
+            if hasattr(self.main, "comfyUserWorkflowsDir"):
+                lib_dir = self.main.comfyUserWorkflowsDir(create=True)
+            if not lib_dir:
+                image_dir, video_dir = self.main.workflowLibraryDirs()
+                lib_dir = video_dir if is_video else image_dir
+                dest_label = f"Library ({'video' if is_video else 'image'})"
             try:
                 os.makedirs(lib_dir, exist_ok=True)
                 lib_path = unique_path(lib_dir, name)
                 with open(lib_path, "w", encoding="utf-8") as f:
                     json.dump(workflows["api"], f, indent=2)
-                saved.append(f"Library ({'video' if is_video else 'image'}): {lib_path}")
+                saved.append(f"{dest_label}: {lib_path}")
             except Exception as e:
                 QMessageBox.warning(self, "Import Failed", f"Could not save to library: {e}")
                 return
 
-        # 2) UI format (fallback: API) into ComfyUI's own workflow folder.
+        # 2) UI format into ComfyUI's own workflow folder (named *_ui when an
+        # API copy already lives there under the plain name).
         if self.saveToComfyCheck.isChecked():
             comfy_dir = comfy_user_workflow_dir(self.main.settingsManager)
-            graph = workflows["ui"] or workflows["api"]
-            if comfy_dir and graph:
+            if comfy_dir and workflows["ui"]:
                 try:
                     os.makedirs(comfy_dir, exist_ok=True)
-                    comfy_path = unique_path(comfy_dir, name)
+                    base_name = f"{name}_ui" if workflows["api"] else name
+                    comfy_path = unique_path(comfy_dir, base_name)
                     with open(comfy_path, "w", encoding="utf-8") as f:
-                        json.dump(graph, f, indent=2)
-                    saved.append(f"ComfyUI: {comfy_path}")
+                        json.dump(workflows["ui"], f, indent=2)
+                    saved.append(f"ComfyUI (UI format): {comfy_path}")
                 except Exception as e:
                     logging.warning(f"Could not save workflow to ComfyUI folder: {e}")
 

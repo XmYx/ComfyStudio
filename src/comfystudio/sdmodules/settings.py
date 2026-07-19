@@ -29,7 +29,7 @@ class SettingsManager:
         self.data = {
             "comfy_py_path": "",
             "comfy_main_path": "",
-            "comfy_ip": "http://localhost:8188",
+            "comfy_ip": "http://127.0.0.1:8188",
             "workflow_params": {}
         }
         if "recent_files" not in self.data:
@@ -173,7 +173,7 @@ class SettingsDialog(QDialog):
         layout.addRow(self.localization.translate("label_theme", default="Theme:"), self.theme_combo)
 
         # Comfy IP
-        self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://localhost:8188"))
+        self.comfyIpEdit = QLineEdit(self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188"))
         layout.addRow("ComfyUI IP/Port:", self.comfyIpEdit)
 
         # Comfy Python Path with Browse Button

@@ -259,6 +259,45 @@ class CustomNodesSetupWorker(QObject):
 
         self.log_message.emit("Custom nodes setup completed.")
         self.finished.emit()
+class ComfyReadyPoller(QObject):
+    """
+    Polls a ComfyUI server until it answers HTTP, then emits ready(url).
+    Used after launching the ComfyUI process so the app can announce the
+    server and (re)load the embedded browser once it is actually reachable.
+    """
+    ready = Signal(str)
+    timed_out = Signal(str)
+    finished = Signal()
+
+    def __init__(self, base_url: str, timeout_secs: float = 180.0, interval: float = 1.0):
+        super().__init__()
+        self.base_url = base_url.rstrip("/")
+        self.timeout_secs = timeout_secs
+        self.interval = interval
+        self._stop = False
+
+    @Slot()
+    def run(self):
+        start = time.time()
+        try:
+            while not self._stop and (time.time() - start) < self.timeout_secs:
+                try:
+                    resp = requests.get(f"{self.base_url}/system_stats", timeout=2)
+                    if resp.status_code == 200:
+                        self.ready.emit(self.base_url)
+                        return
+                except Exception:
+                    pass
+                time.sleep(self.interval)
+            if not self._stop:
+                self.timed_out.emit(self.base_url)
+        finally:
+            self.finished.emit()
+
+    def stop(self):
+        self._stop = True
+
+
 class ComfyWorker(QObject):
     log_message = Signal(str)
     finished = Signal()
@@ -279,8 +318,11 @@ class ComfyWorker(QObject):
         """
         try:
             self.log_message.emit("Starting ComfyUI process...")
+            # Run from ComfyUI's own directory: custom nodes often assume it.
+            comfy_dir = os.path.dirname(self.main_path)
             self.process = subprocess.Popen(
                 [self.py_path, self.main_path],
+                cwd=comfy_dir if os.path.isdir(comfy_dir) else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

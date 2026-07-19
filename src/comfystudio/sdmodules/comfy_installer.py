@@ -31,6 +31,94 @@ from qtpy.QtWidgets import (
 )
 
 
+def split_requirements(requirements_path):
+    """
+    Splits a ComfyUI requirements.txt into (essential, optional) requirement
+    lists. ComfyUI marks the tail of the file with a '#non essential
+    dependencies' comment — those packages (comfy-angle & co.) may have no
+    wheels for a given platform/Python and must not abort the whole install.
+    """
+    essential, optional = [], []
+    bucket = essential
+    with open(requirements_path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                marker = stripped.lstrip("#").strip().lower()
+                if "non essential" in marker or "non-essential" in marker or "optional" in marker:
+                    bucket = optional
+                continue
+            bucket.append(stripped)
+    return essential, optional
+
+
+class RequirementsInstallWorker(QObject):
+    """
+    Installs ComfyUI's requirements into a specific environment, resiliently:
+    pip is upgraded first, the essential requirements are installed as one
+    transaction (with a per-package salvage pass on failure so ONE bad
+    requirement no longer prevents everything else from installing), and the
+    non-essential section is attempted per package — failures there are
+    warnings, not errors (e.g. comfy-angle has no wheels for some platforms).
+    """
+    log = Signal(str)
+    finished = Signal(bool, list, list)  # success, failed_essential, failed_optional
+
+    def __init__(self, python_executable, requirements_path):
+        super().__init__()
+        self.python_executable = python_executable
+        self.requirements_path = requirements_path
+
+    def _run_pip(self, args):
+        cmd = [self.python_executable, "-m", "pip"] + args
+        self.log.emit("$ " + " ".join(cmd))
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                self.log.emit(line.rstrip())
+        process.stdout.close()
+        return process.wait() == 0
+
+    @Slot()
+    def run(self):
+        failed_essential, failed_optional = [], []
+        try:
+            essential, optional = split_requirements(self.requirements_path)
+
+            # Old bundled pips mis-resolve modern wheels; upgrade is cheap.
+            if not self._run_pip(["install", "--upgrade", "pip"]):
+                self.log.emit("Warning: pip self-upgrade failed; continuing with current pip.")
+
+            if essential and not self._run_pip(["install"] + essential):
+                # Salvage: install what CAN be installed and report the rest.
+                self.log.emit("Batch install failed — retrying essential "
+                              "packages one by one to salvage the rest...")
+                for req in essential:
+                    if not self._run_pip(["install", req]):
+                        failed_essential.append(req)
+
+            for req in optional:
+                if not self._run_pip(["install", req]):
+                    failed_optional.append(req)
+                    self.log.emit(f"Warning: optional dependency '{req}' could not "
+                                  "be installed on this platform — skipped.")
+
+            if failed_essential:
+                self.log.emit("Failed essential requirements: " + ", ".join(failed_essential))
+            if failed_optional:
+                self.log.emit("Skipped optional requirements: " + ", ".join(failed_optional))
+            if not failed_essential:
+                self.log.emit("ComfyUI requirements installed successfully.")
+        except Exception as e:
+            self.log.emit(f"Requirements installation error: {e}")
+            failed_essential.append(str(e))
+        finally:
+            self.finished.emit(not failed_essential, failed_essential, failed_optional)
+
+
 class EmittingStream(QObject):
     text_written = Signal(str)
 
@@ -399,6 +487,25 @@ class EnvSelectionPage(QWizardPage):
         if file_path:
             self.custom_python_edit.setText(file_path)
 
+    def _checkPythonVersion(self, py_path):
+        """ComfyUI's current requirements need Python >= 3.10 — gate early."""
+        from comfystudio.sdmodules.comfy_locator import MIN_COMFY_PYTHON, get_python_version
+        version = get_python_version(py_path)
+        if version is None:
+            QMessageBox.warning(self, "Input Error",
+                                f"Could not run the selected Python:\n{py_path}")
+            return False
+        if version < MIN_COMFY_PYTHON:
+            need = ".".join(str(v) for v in MIN_COMFY_PYTHON)
+            QMessageBox.warning(
+                self, "Python Too Old",
+                f"The selected Python is {version[0]}.{version[1]}, but ComfyUI's "
+                f"requirements need Python {need}+ (comfy-kitchen, av and torch "
+                "publish no packages for older versions, so the install would "
+                "fail).\n\nSelect or create a newer environment.")
+            return False
+        return True
+
     def validatePage(self):
         """
         Validate user input before proceeding to the next page.
@@ -406,6 +513,8 @@ class EnvSelectionPage(QWizardPage):
         if self.conda_radio.isChecked():
             selected_env = self.existing_conda_combo.currentData()
             if selected_env and os.path.isfile(selected_env):
+                if not self._checkPythonVersion(selected_env):
+                    return False
                 self.wizard().selected_env_path = selected_env
                 self.wizard().selected_env_type = "conda"
                 return True
@@ -417,6 +526,8 @@ class EnvSelectionPage(QWizardPage):
             venv_dir = self.venv_dir_edit.text().strip()
             if not python_exe or not os.path.isfile(python_exe):
                 QMessageBox.warning(self, "Input Error", "Please select a valid Python executable for the virtual environment.")
+                return False
+            if not self._checkPythonVersion(python_exe):
                 return False
             if not venv_dir:
                 QMessageBox.warning(self, "Input Error", "Please select a directory for the virtual environment.")
@@ -456,6 +567,8 @@ class EnvSelectionPage(QWizardPage):
             if not custom_python or not os.path.isfile(custom_python):
                 QMessageBox.warning(self, "Input Error", "Please select a valid custom Python executable.")
                 return False
+            if not self._checkPythonVersion(custom_python):
+                return False
             self.wizard().selected_env_path = custom_python
             self.wizard().selected_env_type = "custom"
             return True
@@ -465,9 +578,9 @@ class EnvSelectionPage(QWizardPage):
 
     def get_selected_python(self):
         """
-        Retrieve the selected Python executable path.
+        Retrieve the selected Python executable path (stored on the wizard).
         """
-        return getattr(self, 'selected_env_path', "")
+        return getattr(self.wizard(), 'selected_env_path', "")
 
     def log_message(self, message):
         """
@@ -504,7 +617,33 @@ class ComfyUIInstallPage(QWizardPage):
         layout.addWidget(QLabel("ComfyUI Installation Directory:"))
         layout.addLayout(install_layout)
 
+        # Live hint showing where the repository will actually end up.
+        self.target_label = QLabel("")
+        layout.addWidget(self.target_label)
+        self.install_dir_edit.textChanged.connect(self._updateTargetLabel)
+
         self.setLayout(layout)
+
+    def initializePage(self):
+        """Prefills the destination from the current install, else a default."""
+        if self.install_dir_edit.text().strip():
+            return
+        default_dir = os.path.join(os.path.expanduser("~"), "ComfyUI")
+        settings = getattr(self.wizard(), "settings_manager", None)
+        if settings:
+            current_main = settings.get("comfy_main_path", "") or ""
+            if current_main:
+                # <install_dir>/ComfyUI/main.py -> <install_dir>
+                default_dir = os.path.dirname(os.path.dirname(current_main))
+        self.install_dir_edit.setText(default_dir)
+
+    def _updateTargetLabel(self, text):
+        text = text.strip()
+        if text:
+            self.target_label.setText(
+                f"ComfyUI will be cloned into: {os.path.join(text, 'ComfyUI')}")
+        else:
+            self.target_label.setText("")
 
     def browse_install_dir(self):
         """
@@ -536,6 +675,10 @@ class ComfyUIInstallPage(QWizardPage):
             except Exception as e:
                 QMessageBox.warning(self, "Directory Error", f"Failed to create directory: {e}")
                 return False
+        if not os.access(install_dir, os.W_OK):
+            QMessageBox.warning(self, "Directory Error",
+                                f"The selected directory is not writable:\n{install_dir}")
+            return False
 
         # Assign the selected directory to the wizard's attribute
         self.wizard().comfyui_install_dir = install_dir
@@ -543,9 +686,9 @@ class ComfyUIInstallPage(QWizardPage):
 
     def get_install_dir(self):
         """
-        Retrieve the selected installation directory.
+        Retrieve the selected installation directory (stored on the wizard).
         """
-        return getattr(self, 'selected_install_dir', "")
+        return getattr(self.wizard(), 'comfyui_install_dir', "")
 
 class CloningPage(QWizardPage):
     """
@@ -698,9 +841,12 @@ class TorchInstallPage(QWizardPage):
             return
 
         selection = selected_button.text()
+        # Install into the environment chosen on page 1 — NOT ComfyStudio's
+        # own interpreter.
+        python_executable = self.wizard().selected_env_path or sys.executable
         if selection == "AMD GPU (Linux only)":
             cmd = [
-                sys.executable,  # Use the selected Python executable
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -713,7 +859,7 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch with ROCm 6.2 support..."
         elif selection == "Intel GPU (Native)":
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -727,7 +873,7 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch Nightly with XPU support..."
         elif selection == "Intel GPU (IPEX)":
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -738,7 +884,7 @@ class TorchInstallPage(QWizardPage):
             # Determine CUDA version based on available CUDA installations or user input
             # For simplicity, we'll default to CUDA 12.4
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -751,7 +897,7 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch with CUDA 12.4 support..."
         elif selection == "DirectML (AMD on Windows)":
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -767,7 +913,7 @@ class TorchInstallPage(QWizardPage):
             return
         elif selection == "Apple Mac Silicon":
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -781,7 +927,7 @@ class TorchInstallPage(QWizardPage):
             msg = "Installing PyTorch Nightly for Apple Mac Silicon..."
         elif selection == "Other / No GPU":
             cmd = [
-                sys.executable,
+                python_executable,
                 "-m",
                 "pip",
                 "install",
@@ -911,39 +1057,31 @@ class DependenciesInstallPage(QWizardPage):
         """
         Handle the install button click.
         """
-        # Retrieve the Python executable and ComfyUI install directory from previous pages
+        # The selections live on the wizard itself (set by the earlier pages).
         wizard = self.wizard()
-        env_page = wizard.page(0)
-        install_page = wizard.page(1)
-
-        python_executable = env_page.get_selected_python()
-        install_dir = install_page.get_install_dir()
+        python_executable = wizard.selected_env_path
+        install_dir = wizard.comfyui_install_dir
         requirements_path = os.path.join(install_dir, "ComfyUI", "requirements.txt")
 
+        if not python_executable or not os.path.isfile(python_executable):
+            QMessageBox.warning(self, "Environment Error",
+                                "No Python environment selected — go back to the first page.")
+            return
         if not os.path.isfile(requirements_path):
             QMessageBox.warning(self, "File Error", f"requirements.txt not found in {install_dir}/ComfyUI.")
             return
-
-        cmd = [
-            python_executable,
-            "-m",
-            "pip",
-            "install",
-            "-r",
-            requirements_path
-        ]
 
         # Disable the install button and show progress
         self.install_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
-        # Start the installation in a separate thread to keep UI responsive
+        # Resilient two-phase install (essentials batch + optionals one by
+        # one) in a separate thread to keep the UI responsive.
         self.thread = QThread()
-        self.worker = DependenciesInstallerWorker(cmd)
+        self.worker = RequirementsInstallWorker(python_executable, requirements_path)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.log.connect(self.log_message)
         self.worker.finished.connect(self.on_install_finished)
         self.worker.finished.connect(self.thread.quit)
@@ -964,15 +1102,28 @@ class DependenciesInstallPage(QWizardPage):
             else:
                 print(message)
 
-    @Slot()
-    def on_install_finished(self):
+    @Slot(bool, list, list)
+    def on_install_finished(self, success, failed_essential, failed_optional):
         """
         Handle the completion of the dependencies installation.
         """
         self.progress_bar.setValue(100)
-        QMessageBox.information(self, "Installation Complete", "ComfyUI dependencies have been installed successfully.")
         self.install_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
+        if success:
+            msg = "ComfyUI dependencies have been installed successfully."
+            if failed_optional:
+                msg += ("\n\nSkipped optional packages (not available for this "
+                        "platform/Python):\n" + ", ".join(failed_optional) +
+                        "\n\nComfyUI runs without them.")
+            QMessageBox.information(self, "Installation Complete", msg)
+        else:
+            QMessageBox.warning(
+                self, "Installation Incomplete",
+                "These required packages could not be installed:\n"
+                + ", ".join(failed_essential)
+                + "\n\nCheck the log for details (a too-old Python version is "
+                  "the most common cause — ComfyUI needs 3.10+).")
 
 
 class DependenciesInstallerWorker(QObject):

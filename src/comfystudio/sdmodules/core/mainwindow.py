@@ -189,8 +189,11 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
                 "actions": [
                     {"name": "openSettingsAct", "text": "Settings", "trigger": self.showSettingsDialog},
                     {"name": "openModelManagerAct", "text": "Model Manager", "trigger": self.openModelManager},
-                    {"name": "setupComfyNodesAct", "text": "Setup Comfy Nodes", "trigger": self.setupCustomNodes},
-                    {"name": "setupComfyAct", "text": "Setup Comfy", "trigger": self.startComfyInstallerWizard}
+                    {"separator": True},
+                    {"name": "selectComfyInstallAct", "text": "Select ComfyUI Installation",
+                     "trigger": self.selectComfyInstallation},
+                    {"name": "setupComfyAct", "text": "Install/Update ComfyUI", "trigger": self.startComfyInstallerWizard},
+                    {"name": "setupComfyNodesAct", "text": "Install/Update Custom Nodes", "trigger": self.setupCustomNodes}
                 ]
             },
             "Help": {
@@ -458,11 +461,12 @@ class ComfyStudioWindow(ComfyStudioUI, ComfyStudioShotManager, ComfyStudioComfyH
             # Show the WebBrowser dock
             self.webBrowserDock.setVisible(True)
 
-            # Load the ComfyUI page if the view is still blank.
+            # Load the ComfyUI page if the view is blank OR the previous load
+            # failed (e.g. the dock was opened before ComfyUI was running).
             current_url = self.webBrowserView.url().toString()
-            if not current_url or current_url == "about:blank":
-                comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
-                self.webBrowserView.setUrl(QUrl(comfy_ip))
+            if (not current_url or current_url == "about:blank"
+                    or not getattr(self, "_webBrowserLoadOk", False)):
+                self.webBrowserView.setUrl(QUrl(self.getComfyApiUrl()))
 
             # Open the currently selected workflow in the editor.
             item = self.workflowListWidget.currentItem()

@@ -42,6 +42,8 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 | `sdmodules/shot_node_editor.py` | Shot workflow graph dock (node editor for chaining workflows) |
 | `sdmodules/workflow_edit_server.py` | Localhost bridge for save-back from embedded ComfyUI |
 | `sdmodules/workflow_browser.py` | ComfyUI-examples scraper/import dialog (File → Import Example Workflows) |
+| `sdmodules/comfy_locator.py` | Detects ComfyUI installs (`find_comfy_root`/`find_comfy_python`: repo, `ComfyUI/` subdir, portable bundle, venv/.venv). `startComfy` resolves/repairs settings paths through it, preflights core deps with `_missingComfyDeps` (find_spec subprocess, fails open) and offers to pip-install requirements.txt into that env; `ComfyWorker` runs with cwd = ComfyUI dir |
+| `sdmodules/comfy_installer.py` | Install/Update ComfyUI wizard (destination selector page prefills from `comfy_main_path`; installs into the wizard-selected env, never `sys.executable`). `RequirementsInstallWorker` + `split_requirements`: pip self-upgrade, essentials batch with per-package salvage, the `#non essential dependencies` section (comfy-angle & co. — no wheels on some platforms) installed per package with failures downgraded to warnings. Env pages gate on `MIN_COMFY_PYTHON` (3.10 — comfy-kitchen/av≥16/torch resolve on nothing older; on older Pythons a plain `pip install -r` aborts entirely) |
 | `sdmodules/qss.py` | `dark_qss` / `light_qss`, `get_stylesheet(theme)` |
 | `sdmodules/pyenvutils.py` | `find_latest_python()` interpreter discovery |
 | `sdmodules/worker.py` | `RenderWorker` (Comfy polling), `ComfyWorker` (Comfy process) |
@@ -128,9 +130,17 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
   workflow, and `executeWorkflow`'s prev-result overrides feed `shot.stillPath` /
   `shot.videoPath` based on what the param asks for (`usePrevResultImage/Video`), not on
   the previous workflow's declared `isVideo`.
-- The UI lists workflows in **one** combo (`workflowCombo`, filled by `loadWorkflows`
-  with the deduped union of both library dirs). `isVideo` is only a hint (output
-  subfolder naming); the real result type is detected in `onComfyResult`. Keep the
+- The UI lists workflows in **one** combo (`workflowCombo`, filled by `loadWorkflows`).
+  The **shared library is ComfyUI's own `user/default/workflows`**
+  (`base.py::comfyUserWorkflowsDir`, derived from `comfy_main_path`): `loadWorkflows`
+  scans it recursively (API-format files only — UI-format saves there are skipped),
+  the example importer saves API workflows into it (legacy image/video dirs are the
+  fallback when no install is configured), and a `QFileSystemWatcher`
+  `directoryChanged` hook (`_onWorkflowDirChanged`, debounced) refreshes the combo
+  when files appear — e.g. Ctrl+S saves from the embedded editor. The bundled
+  image/video default workflows were removed (outdated); `workflows/llm` stays
+  (wizard plugin). `isVideo` is only a hint (output subfolder naming); the real
+  result type is detected in `onComfyResult`. Keep the
   `image_workflows`/`video_workflows` attributes and the `addWorkflowToShot(path,
   isVideo=)` signature — `plugins/wizard.py` depends on them.
 - Example import (`workflow_browser.py`): parses the examples site with stdlib
@@ -148,6 +158,16 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 
 - The Web Browser dock is **optional**: `PyQt6-WebEngine` import is wrapped in
   try/except in `ui.py::createWindowsMenu`; guard all access with `hasattr`.
+- All ComfyUI server URLs go through `base.py::getComfyApiUrl()` — it strips the
+  trailing slash and maps `localhost` → `127.0.0.1` (macOS resolves localhost to
+  ::1 first while ComfyUI binds IPv4-only). Never read the `comfy_ip` setting raw.
+- The browser view is loaded **lazily**: never at construction (ComfyUI isn't up
+  yet — Chromium would cache an error page). `_webBrowserLoadOk` (set on
+  `loadFinished`) marks failed loads; toggling the dock, `loadWorkflowInBrowser`
+  and `onComfyReady` all reload when the view is blank or the last load failed.
+  `startComfy` spawns a `ComfyReadyPoller` (worker.py, polls `/system_stats`)
+  that fires `onComfyReady` → status message + browser (re)load; stopped in
+  `stopComfy`.
 - Selecting a workflow while the dock is visible loads it into the ComfyUI canvas via
   injected JS (`app.loadApiJson`, retry loop, `loadGraphData` fallback). Re-selecting
   the file already open is a no-op to preserve unsaved canvas edits.

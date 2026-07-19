@@ -160,11 +160,10 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
 
             self.webBrowserView = QWebEngineView()
             self.webBrowserDock.setWidget(self.webBrowserView)
-            # Retrieve the 'comfy_ip' URL from settings
-            comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
-
-            # Load the URL in the WebBrowser view
-            self.webBrowserView.setUrl(QUrl(comfy_ip))
+            # The ComfyUI page is loaded lazily (when the dock is shown or the
+            # server becomes reachable) — loading it here, before ComfyUI is
+            # running, would leave a stale connection-error page in the view.
+            self._webBrowserLoadOk = False
             # Add the WebBrowser dock to the same area as Shot Details and tabify
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.webBrowserDock)
             self.webBrowserDock.hide()
@@ -182,6 +181,9 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         current graph (API format) to ComfyStudio's local save endpoint instead of
         triggering the browser/ComfyUI download.
         """
+        # Track whether the last page load succeeded so toggling the dock (or
+        # ComfyUI becoming reachable) knows to retry a failed load.
+        self._webBrowserLoadOk = bool(ok)
         if not ok or not hasattr(self, "workflowEditBridge"):
             return
         js = """
@@ -247,10 +249,11 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.workflowEditBridge.set_target(workflow.path)
         self._watchWorkflowFile(workflow.path)
 
-        # Make sure the ComfyUI page itself is loaded.
-        comfy_ip = self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188")
+        # Make sure the ComfyUI page itself is loaded (retry failed loads too).
+        comfy_ip = self.getComfyApiUrl()
         current_url = self.webBrowserView.url().toString()
-        if not current_url or current_url == "about:blank":
+        if (not current_url or current_url == "about:blank"
+                or not getattr(self, "_webBrowserLoadOk", False)):
             self.webBrowserView.setUrl(QUrl(comfy_ip))
 
         name = os.path.basename(workflow.path)
@@ -303,7 +306,28 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             from qtpy.QtCore import QFileSystemWatcher
             self._workflowWatcherObj = QFileSystemWatcher(self)
             self._workflowWatcherObj.fileChanged.connect(self._onWorkflowFileChanged)
+            # Library directories: new/removed workflow files (e.g. saved from
+            # the embedded ComfyUI editor) refresh the workflow listing.
+            self._workflowWatcherObj.directoryChanged.connect(self._onWorkflowDirChanged)
         return self._workflowWatcherObj
+
+    def _watchWorkflowDir(self, directory):
+        if directory and os.path.isdir(directory):
+            watcher = self._workflowFileWatcher()
+            if directory not in watcher.directories():
+                watcher.addPath(directory)
+
+    def _onWorkflowDirChanged(self, _path):
+        # Debounce: a save often produces several change events.
+        if getattr(self, "_libraryReloadPending", False):
+            return
+        self._libraryReloadPending = True
+
+        def reload():
+            self._libraryReloadPending = False
+            self.loadWorkflows()
+
+        QTimer.singleShot(400, reload)
 
     def _watchWorkflowFile(self, path):
         if path and os.path.isfile(path):
@@ -1099,27 +1123,59 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         video_dir = self.settingsManager.get("comfy_video_workflows") or os.path.join(base_dir, "video")
         return image_dir, video_dir
 
+    def _isApiWorkflowFile(self, path):
+        """True when the file parses as an API-format (renderable) workflow."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return False
+        if not isinstance(data, dict) or not data:
+            return False
+        if isinstance(data.get("nodes"), list):  # UI-format export
+            return False
+        return any(isinstance(nd, dict) and isinstance(nd.get("inputs", {}), dict)
+                   for nd in data.values())
+
     def loadWorkflows(self):
         image_dir, video_dir = self.workflowLibraryDirs()
+        comfy_dir = self.comfyUserWorkflowsDir()
 
-        def collect_workflows(directory):
+        def collect_workflows(directory, recursive=False):
             found = []
             if not directory or not os.path.isdir(directory):
                 return found
             try:
-                for fname in sorted(os.listdir(directory), key=str.lower):
-                    if fname.lower().endswith(".json"):
-                        full = os.path.join(directory, fname)
-                        if os.path.isfile(full):
-                            found.append(full)
+                if recursive:
+                    for root, _dirs, files in os.walk(directory):
+                        for fname in sorted(files, key=str.lower):
+                            if fname.lower().endswith(".json"):
+                                found.append(os.path.join(root, fname))
+                else:
+                    for fname in sorted(os.listdir(directory), key=str.lower):
+                        if fname.lower().endswith(".json"):
+                            full = os.path.join(directory, fname)
+                            if os.path.isfile(full):
+                                found.append(full)
             except OSError as e:
                 logging.warning(f"Cannot list workflow directory '{directory}': {e}")
             return found
 
+        # ComfyUI's own workflow folder is the shared library (kept in sync
+        # with the embedded ComfyUI). Only API-format files are renderable;
+        # UI-format saves living there are skipped from the listing.
+        comfy_workflows = [p for p in collect_workflows(comfy_dir, recursive=True)
+                           if self._isApiWorkflowFile(p)]
+
         # Kept as separate attributes for plugin compatibility (wizard plugin
         # reads image_workflows/video_workflows).
-        self.image_workflows = collect_workflows(image_dir)
+        self.image_workflows = collect_workflows(image_dir) + comfy_workflows
         self.video_workflows = collect_workflows(video_dir)
+
+        # Refresh the listing when files appear/disappear in any library dir
+        # (e.g. Ctrl+S saves from the embedded ComfyUI editor).
+        for directory in (comfy_dir, image_dir, video_dir):
+            self._watchWorkflowDir(directory)
 
         # One type-agnostic list, deduped by absolute path.
         combined = []

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import subprocess
 import tempfile
 import time
 import urllib
@@ -14,6 +15,7 @@ from qtpy.QtCore import QThreadPool
 from qtpy.QtCore import (
     Qt,
     QThread,
+    QUrl,
     Signal
 )
 from qtpy.QtWidgets import (
@@ -30,7 +32,12 @@ from comfystudio.sdmodules.cs_datastruts import (
     node_output_port_node_id,
     workflow_param_port_id,
 )
-from comfystudio.sdmodules.worker import RenderWorker, CustomNodesSetupWorker, ComfyWorker
+from comfystudio.sdmodules.worker import (
+    ComfyReadyPoller,
+    ComfyWorker,
+    CustomNodesSetupWorker,
+    RenderWorker,
+)
 
 
 class ComfyStudioShotManager:
@@ -57,10 +64,140 @@ class ComfyStudioComfyHandler:
         self.workflowQueue = {}   # Maps shotIndex -> list of (workflowIndex) to process
         self.shotInProgress = -1  # The shot we are currently processing
         self.workflowIndexInProgress = -1  # Current workflow index in that shot
+    def _resolveComfyPaths(self, py_path, main_path):
+        """
+        Normalizes/repairs the configured ComfyUI paths so the launch always
+        uses the install's own environment: directories are resolved to the
+        real main.py / venv python (via comfy_locator), and a missing python
+        is auto-detected next to the install. Returns (py_path, main_path) or
+        (None, None) after showing a warning. Repaired values are saved back.
+        """
+        from comfystudio.sdmodules.comfy_locator import find_comfy_python, find_comfy_root
+
+        orig_py, orig_main = py_path, main_path
+
+        # main_path may point at the repo (or its parent) instead of main.py.
+        if main_path and not os.path.isfile(main_path):
+            root = find_comfy_root(main_path)
+            if root:
+                main_path = os.path.join(root, "main.py")
+        if not main_path or not os.path.isfile(main_path):
+            QMessageBox.warning(
+                self, "Error",
+                f"ComfyUI main.py not found:\n{orig_main}\n\n"
+                "Use Settings → Select ComfyUI Installation to fix the path.")
+            return None, None
+
+        # py_path may point at a venv directory, or be stale/empty — resolve
+        # to the interpreter of the environment installed with ComfyUI.
+        if py_path and not os.path.isfile(py_path):
+            for env_dir in (py_path, os.path.join(py_path, "venv"), os.path.join(py_path, ".venv")):
+                candidate = os.path.join(
+                    env_dir, "Scripts", "python.exe") if os.name == "nt" else os.path.join(env_dir, "bin", "python")
+                if os.path.isfile(candidate):
+                    py_path = candidate
+                    break
+        if not py_path or not os.path.isfile(py_path):
+            py_path = find_comfy_python(os.path.dirname(main_path))
+        if not py_path:
+            QMessageBox.warning(
+                self, "Error",
+                "No Python environment found for ComfyUI.\n\n"
+                "Use Settings → Select ComfyUI Installation (or the installer "
+                "wizard) to configure the environment ComfyUI runs with.")
+            return None, None
+
+        if (py_path, main_path) != (orig_py, orig_main):
+            self.settingsManager.set("comfy_py_path", py_path)
+            self.settingsManager.set("comfy_main_path", main_path)
+            self.settingsManager.save()
+            self.appendLog(f"Resolved ComfyUI paths: {py_path} {main_path}")
+        return py_path, main_path
+
+    def _missingComfyDeps(self, py_path):
+        """
+        Fast preflight: which core ComfyUI packages are absent from the
+        environment at py_path? Uses find_spec (no imports, so checking torch
+        is cheap). Returns [] when everything is present or the check fails.
+        """
+        code = ("import importlib.util\n"
+                "mods = ['torch', 'yaml', 'aiohttp', 'PIL', 'safetensors']\n"
+                "print(','.join(m for m in mods if importlib.util.find_spec(m) is None))")
+        try:
+            result = subprocess.run([py_path, "-c", code],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                logging.warning(f"Dependency preflight failed: {result.stderr.strip()}")
+                return []
+            return [m for m in result.stdout.strip().split(",") if m]
+        except Exception as e:
+            logging.warning(f"Dependency preflight failed: {e}")
+            return []
+
+    def _installComfyDeps(self, py_path, main_path):
+        """
+        Installs ComfyUI's requirements.txt into the environment at py_path
+        (background thread, resilient two-phase install: optional packages
+        like comfy-angle that have no wheels for a platform are skipped with a
+        warning instead of aborting everything), then relaunches startComfy on
+        success.
+        """
+        requirements = os.path.join(os.path.dirname(main_path), "requirements.txt")
+        if not os.path.isfile(requirements):
+            QMessageBox.warning(self, "Error",
+                                f"requirements.txt not found next to main.py:\n{requirements}")
+            return
+
+        from comfystudio.sdmodules.comfy_locator import MIN_COMFY_PYTHON, get_python_version
+        version = get_python_version(py_path)
+        if version and version < MIN_COMFY_PYTHON:
+            need = ".".join(str(v) for v in MIN_COMFY_PYTHON)
+            QMessageBox.warning(
+                self, "Python Too Old",
+                f"The ComfyUI environment uses Python {version[0]}.{version[1]}, but "
+                f"ComfyUI's requirements need Python {need}+ — the install would "
+                "fail.\n\nUse Settings → Install/Update ComfyUI to set up a newer "
+                "environment.")
+            return
+
+        from comfystudio.sdmodules.comfy_installer import RequirementsInstallWorker
+
+        self.status_widgets["statusMessage"].setText("Installing ComfyUI dependencies...")
+        self.appendLog(f"Installing ComfyUI dependencies into {py_path} ...")
+        self._deps_thread = QThread()
+        self._deps_worker = RequirementsInstallWorker(py_path, requirements)
+        self._deps_worker.moveToThread(self._deps_thread)
+        self._deps_thread.started.connect(self._deps_worker.run)
+        self._deps_worker.log.connect(self.appendLog)
+
+        def on_done(success, failed_essential, failed_optional):
+            self._deps_thread.quit()
+            if failed_optional:
+                self.appendLog("Skipped optional ComfyUI packages (unavailable on this "
+                               "platform): " + ", ".join(failed_optional))
+            still_missing = self._missingComfyDeps(py_path)
+            if not success or still_missing:
+                self.status_widgets["statusMessage"].setText("Dependency install incomplete.")
+                problems = failed_essential + [m for m in still_missing
+                                               if m not in failed_essential]
+                QMessageBox.warning(
+                    self, "Dependencies Missing",
+                    "These packages could not be installed:\n"
+                    f"{', '.join(problems)}\n\nCheck the Terminal Output log.")
+            else:
+                self.status_widgets["statusMessage"].setText(
+                    "Dependencies installed. Starting ComfyUI...")
+                self.startComfy()
+
+        self._deps_worker.finished.connect(on_done)
+        self._deps_thread.start()
+
     def startComfy(self):
         """
         Launches the ComfyUI process in a separate thread using ComfyWorker.
-        Ensures that the UI remains responsive and logs are captured.
+        Always runs ComfyUI with the environment installed for it (paths are
+        resolved/repaired first, and missing dependencies can be installed
+        into that environment before launch).
         """
         if self.comfy_running:
             QMessageBox.information(self, "Info", "ComfyUI is already running.")
@@ -68,7 +205,28 @@ class ComfyStudioComfyHandler:
 
         py_path = self.settingsManager.get("comfy_py_path")
         main_path = self.settingsManager.get("comfy_main_path")
-        if py_path and main_path:
+        if py_path or main_path:
+            py_path, main_path = self._resolveComfyPaths(py_path, main_path)
+            if not py_path or not main_path:
+                return
+
+            missing = self._missingComfyDeps(py_path)
+            if missing:
+                box = QMessageBox(self)
+                box.setWindowTitle("ComfyUI Dependencies Missing")
+                box.setText(
+                    "The ComfyUI environment is missing these packages:\n"
+                    f"{', '.join(missing)}\n\n{py_path}")
+                install_btn = box.addButton("Install Now", QMessageBox.ButtonRole.AcceptRole)
+                box.addButton("Start Anyway", QMessageBox.ButtonRole.DestructiveRole)
+                cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+                box.exec()
+                if box.clickedButton() is install_btn:
+                    self._installComfyDeps(py_path, main_path)
+                    return
+                if box.clickedButton() is cancel_btn:
+                    return
+
             # Create the worker and thread
             self.comfy_thread = QThread()
             self.comfy_worker = ComfyWorker(py_path=py_path, main_path=main_path)
@@ -86,10 +244,43 @@ class ComfyStudioComfyHandler:
             # Start the thread
             self.comfy_thread.start()
             self.comfy_running = True
-            self.status_widgets['statusMessage'].setText("ComfyUI started.")
+            self.status_widgets['statusMessage'].setText("ComfyUI starting...")
             self.appendLog("ComfyUI process started.")
+            # Announce the server (and load the embedded browser) once it
+            # actually answers HTTP.
+            self._startComfyReadyPoll()
         else:
             QMessageBox.warning(self, "Error", "Comfy paths not set in settings.")
+
+    def _startComfyReadyPoll(self):
+        self._stopComfyReadyPoll()
+        url = self.getComfyApiUrl()
+        self._comfy_ready_thread = QThread()
+        self._comfy_ready_poller = ComfyReadyPoller(url)
+        self._comfy_ready_poller.moveToThread(self._comfy_ready_thread)
+        self._comfy_ready_thread.started.connect(self._comfy_ready_poller.run)
+        self._comfy_ready_poller.ready.connect(self.onComfyReady)
+        self._comfy_ready_poller.timed_out.connect(
+            lambda u: self.appendLog(f"ComfyUI has not responded at {u} yet — "
+                                     "check the log above for startup errors."))
+        self._comfy_ready_poller.finished.connect(self._comfy_ready_thread.quit)
+        self._comfy_ready_thread.start()
+
+    def _stopComfyReadyPoll(self):
+        poller = getattr(self, "_comfy_ready_poller", None)
+        if poller is not None:
+            poller.stop()
+
+    def onComfyReady(self, url):
+        """The ComfyUI server answered: announce it and show it in the app."""
+        self.status_widgets["statusMessage"].setText(f"ComfyUI is running at {url}")
+        self.appendLog(f"ComfyUI is reachable at {url}")
+        view = getattr(self, "webBrowserView", None)
+        if view is not None:
+            current = view.url().toString()
+            if (not current or current == "about:blank"
+                    or not getattr(self, "_webBrowserLoadOk", False)):
+                view.setUrl(QUrl(url))
     def stopComfy(self):
         """
         Signals the ComfyWorker to terminate the ComfyUI process.
@@ -97,6 +288,7 @@ class ComfyStudioComfyHandler:
         """
         if self.comfy_running and self.comfy_worker:
             try:
+                self._stopComfyReadyPoll()
                 self.comfy_worker.stop()
                 self.comfy_running = False
                 self.status_widgets["statusMessage"].setText("Stopping ComfyUI...")
@@ -622,7 +814,7 @@ class ComfyStudioComfyHandler:
                             inputs_dict["text"] = new_val
 
         # Create and start the RenderWorker to handle submission + result polling
-        comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188")
+        comfy_ip = self.getComfyApiUrl()
         worker = RenderWorker(
             workflow_json=workflow_json,
             shotIndex=shotIndex,
@@ -804,7 +996,7 @@ class ComfyStudioComfyHandler:
         # self.processNextWorkflow()
 
     def downloadComfyFile(self, comfy_filename):
-        comfy_ip = self.settingsManager.get("comfy_ip", "http://localhost:8188").rstrip("/")
+        comfy_ip = self.getComfyApiUrl()
         sub_parts = comfy_filename.replace("\\", "/").split("/")
         params = {}
         if len(sub_parts) > 1:
@@ -894,3 +1086,72 @@ class ComfyStudioComfyHandler:
         """
         wizard = ComfyInstallerWizard(parent=self, settings_manager=self.settingsManager, log_callback=self.appendLog)
         wizard.exec()
+        # A (new) install brings its own user/default/workflows library.
+        if hasattr(self, "loadWorkflows"):
+            self.loadWorkflows()
+
+    def selectComfyInstallation(self):
+        """
+        Points ComfyStudio at an existing ComfyUI installation: the user picks
+        the directory, main.py and the environment's Python are auto-detected
+        (venv/.venv beside or inside the repo, or a portable bundle) and stored
+        in settings.
+        """
+        from comfystudio.sdmodules.comfy_locator import detect_comfy_installation
+
+        start_dir = ""
+        current_main = self.settingsManager.get("comfy_main_path", "")
+        if current_main:
+            start_dir = os.path.dirname(os.path.dirname(current_main))
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select ComfyUI Installation Directory", start_dir)
+        if not directory:
+            return
+        info = detect_comfy_installation(directory)
+        if info is None:
+            QMessageBox.warning(
+                self, "Not a ComfyUI Installation",
+                f"No ComfyUI installation found in:\n{directory}\n\n"
+                "Expected a folder containing main.py and the 'comfy' package "
+                "(or a 'ComfyUI' subfolder with them). Use 'Install/Update "
+                "ComfyUI' to install a fresh copy."
+            )
+            return
+
+        python = info["python"]
+        if not python:
+            reply = QMessageBox.question(
+                self, "Python Environment Not Found",
+                "ComfyUI was found, but no Python environment could be detected "
+                "next to it.\n\nLocate the Python executable ComfyUI should run "
+                "with now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                python, _ = QFileDialog.getOpenFileName(
+                    self, "Select Python Executable", "",
+                    "Python Executable (python python3 python.exe);;All Files (*)")
+
+        self.settingsManager.set("comfy_main_path", info["main_py"])
+        if python:
+            self.settingsManager.set("comfy_py_path", python)
+        self.settingsManager.save()
+
+        summary = f"ComfyUI: {info['main_py']}"
+        if python:
+            summary += f"\nPython: {python}"
+            from comfystudio.sdmodules.comfy_locator import MIN_COMFY_PYTHON, get_python_version
+            version = get_python_version(python)
+            if version and version < MIN_COMFY_PYTHON:
+                need = ".".join(str(v) for v in MIN_COMFY_PYTHON)
+                summary += (f"\n\nWarning: this environment is Python "
+                            f"{version[0]}.{version[1]} — ComfyUI's requirements need "
+                            f"{need}+, dependency installs will fail.")
+        else:
+            summary += ("\nPython: not set — configure the ComfyUI Python path "
+                        "in Settings before starting ComfyUI.")
+        QMessageBox.information(self, "ComfyUI Installation Selected", summary)
+        self.status_widgets["statusMessage"].setText("ComfyUI installation configured.")
+        # The install's user/default/workflows folder is the shared library.
+        if hasattr(self, "loadWorkflows"):
+            self.loadWorkflows()

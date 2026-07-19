@@ -154,6 +154,40 @@ class ComfyStudioBase:
         return hasattr(self, 'currentFilePath') and self.currentFilePath and not self.isProjectModified()
 
 
+    def getComfyApiUrl(self):
+        """
+        The ComfyUI server URL from settings, normalized: no trailing slash
+        and 'localhost' mapped to 127.0.0.1 (macOS resolves localhost to the
+        IPv6 ::1 first, while ComfyUI's default bind is IPv4-only — the
+        embedded browser would show a connection error).
+        """
+        url = (self.settingsManager.get("comfy_ip", "http://127.0.0.1:8188") or "").strip().rstrip("/")
+        if not url:
+            url = "http://127.0.0.1:8188"
+        return url.replace("://localhost", "://127.0.0.1")
+
+    def comfyUserWorkflowsDir(self, create=False):
+        """
+        ComfyUI's own workflow folder (<comfy root>/user/default/workflows).
+        This is the shared workflow library: ComfyStudio lists it and imports
+        save into it, so the embedded ComfyUI sees the same workflows.
+        Returns None when no ComfyUI install is configured.
+        """
+        main_path = self.settingsManager.get("comfy_main_path", "") or ""
+        if not main_path:
+            return None
+        root = os.path.dirname(main_path)
+        if not os.path.isdir(root):
+            return None
+        directory = os.path.join(root, "user", "default", "workflows")
+        if create:
+            try:
+                os.makedirs(directory, exist_ok=True)
+            except OSError as e:
+                logging.warning(f"Cannot create ComfyUI workflows dir '{directory}': {e}")
+                return None
+        return directory
+
     def getWidgetData(self, name):
         if hasattr(self, name):
             w = getattr(self, name)
