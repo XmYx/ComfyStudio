@@ -1,5 +1,6 @@
 {
     "custom_nodes": [
+        "https://github.com/Comfy-Org/ComfyUI-Manager",
         "https://github.com/kijai/ComfyUI-KJNodes",
         "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
         "https://github.com/chengzeyi/Comfy-WaveSpeed",

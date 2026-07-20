@@ -207,7 +207,11 @@ class ShotPreviewDock(QDockWidget):
         # the declared isVideo flag is only a hint and may not match reality.
         last_output = getattr(wfa, "lastOutput", "")
         if last_output and os.path.exists(last_output):
-            if getattr(wfa, "lastOutputIsVideo", False):
+            out_type = (getattr(wfa, "lastOutputType", "") or "").upper()
+            # Audio and video both play through the media player; only true
+            # images go to the image view.
+            if out_type in ("VIDEO", "AUDIO") or (
+                    not out_type and getattr(wfa, "lastOutputIsVideo", False)):
                 self.showVideo(last_output, f"{shot.name} (WF {wfIndex+1})")
             else:
                 self.showImage(last_output, f"{shot.name} (WF {wfIndex+1})")

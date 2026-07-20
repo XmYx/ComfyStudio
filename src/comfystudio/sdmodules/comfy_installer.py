@@ -445,14 +445,13 @@ class EnvSelectionPage(QWizardPage):
         """
         Browse to select a Python executable for system venv.
         """
-        options = QFileDialog.Options()
+        # PyQt6 has no QFileDialog.Options() factory — pass no options.
         file_filter = "Python Executable (python.exe python)"
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Python Executable",
             "",
-            file_filter,
-            options=options
+            file_filter
         )
         if file_path:
             self.python_exe_edit.setText(file_path)
@@ -461,12 +460,11 @@ class EnvSelectionPage(QWizardPage):
         """
         Browse to select a directory for the virtual environment.
         """
-        options = QFileDialog.Options()
         directory = QFileDialog.getExistingDirectory(
             self,
             "Select Virtual Environment Directory",
             "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+            QFileDialog.Option.ShowDirsOnly
         )
         if directory:
             self.venv_dir_edit.setText(directory)
@@ -475,14 +473,12 @@ class EnvSelectionPage(QWizardPage):
         """
         Browse to select a custom Python executable.
         """
-        options = QFileDialog.Options()
         file_filter = "Python Executable (python.exe python)"
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Custom Python Executable",
             "",
-            file_filter,
-            options=options
+            file_filter
         )
         if file_path:
             self.custom_python_edit.setText(file_path)
@@ -649,12 +645,11 @@ class ComfyUIInstallPage(QWizardPage):
         """
         Open a directory selection dialog.
         """
-        options = QFileDialog.Options()
         directory = QFileDialog.getExistingDirectory(
             self,
             "Select Installation Directory",
             "",
-            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+            QFileDialog.Option.ShowDirsOnly
         )
         if directory:
             self.install_dir_edit.setText(directory)

@@ -44,6 +44,8 @@ from qtpy.QtWidgets import (
 from comfystudio.sdmodules.aboutdialog import AboutDialog
 from comfystudio.sdmodules.core.base import ComfyStudioBase
 from comfystudio.sdmodules.cs_datastruts import Shot, WorkflowAssignment
+from comfystudio.sdmodules.comfy_datatypes import RESULT_TYPE_CHOICES, result_port_type
+from comfystudio.sdmodules.comfy_workflow_convert import can_convert_ui_workflow
 from comfystudio.sdmodules.help import HelpWindow
 from comfystudio.sdmodules.model_manager import ModelManagerWindow
 from comfystudio.sdmodules.node_visualizer import WorkflowVisualizer
@@ -311,11 +313,24 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self._workflowWatcherObj.directoryChanged.connect(self._onWorkflowDirChanged)
         return self._workflowWatcherObj
 
-    def _watchWorkflowDir(self, directory):
-        if directory and os.path.isdir(directory):
-            watcher = self._workflowFileWatcher()
-            if directory not in watcher.directories():
-                watcher.addPath(directory)
+    def _watchWorkflowDir(self, directory, recursive=False):
+        if not directory or not os.path.isdir(directory):
+            return
+        watcher = self._workflowFileWatcher()
+        watched = set(watcher.directories())
+
+        def add(d):
+            if d not in watched:
+                watcher.addPath(d)
+                watched.add(d)
+
+        add(directory)
+        if recursive:
+            try:
+                for root, _dirs, _files in os.walk(directory):
+                    add(root)
+            except OSError as e:
+                logging.warning(f"Cannot walk workflow directory '{directory}': {e}")
 
     def _onWorkflowDirChanged(self, _path):
         # Debounce: a save often produces several change events.
@@ -328,6 +343,21 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             self.loadWorkflows()
 
         QTimer.singleShot(400, reload)
+
+    def refreshWorkflows(self):
+        """Manually rescan the workflow library (toolbar/refresh button).
+
+        Use when files were copied in outside the app, or when the filesystem
+        watcher missed a change.
+        """
+        self.loadWorkflows()
+        count = self.workflowCombo.count()
+        sw = getattr(self, "status_widgets", None)
+        if sw and "statusMessage" in sw:
+            sw["statusMessage"].setText(
+                f"Workflow library refreshed ({count} workflow"
+                f"{'' if count == 1 else 's'})."
+            )
 
     def _watchWorkflowFile(self, path):
         if path and os.path.isfile(path):
@@ -639,9 +669,21 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                                         default="Add the selected workflow to the shot")
         )
         self.addWorkflowBtn.clicked.connect(self.addWorkflow)
+        self.refreshWorkflowsBtn = QPushButton(
+            self.localization.translate("button_refresh_workflows", default="↻")
+        )
+        self.refreshWorkflowsBtn.setToolTip(
+            self.localization.translate(
+                "tooltip_refresh_workflows",
+                default="Rescan the workflow library (e.g. after saving in ComfyUI "
+                        "or copying workflow files in manually)")
+        )
+        self.refreshWorkflowsBtn.setFixedWidth(32)
+        self.refreshWorkflowsBtn.clicked.connect(self.refreshWorkflows)
         comboLayout.addWidget(self.workflowLabel)
         comboLayout.addWidget(self.workflowCombo)
         comboLayout.addWidget(self.addWorkflowBtn)
+        comboLayout.addWidget(self.refreshWorkflowsBtn)
         groupLayout.addLayout(comboLayout)
 
         self.workflowListLabel = QLabel(
@@ -1079,6 +1121,29 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 label = QLabel(os.path.basename(workflow.path))
                 rowLayout.addWidget(label)
 
+                rowLayout.addStretch()
+
+                # Per-workflow output type: "Auto" detects from the render; the
+                # other choices pin the Result port's type for robust chaining.
+                rowLayout.addWidget(QLabel("Output:"))
+                outCombo = QComboBox()
+                for value, text in RESULT_TYPE_CHOICES:
+                    outCombo.addItem(text, value)
+                current_override = getattr(workflow, "outputType", "") or ""
+                idx = outCombo.findData(current_override)
+                outCombo.setCurrentIndex(idx if idx >= 0 else 0)
+                # Show what Auto currently resolves to (detected/hint type).
+                detected = result_port_type(workflow)
+                outCombo.setItemText(0, f"Auto ({detected.title()})")
+                outCombo.setToolTip(
+                    "Output type of this workflow's Result port.\n"
+                    "Auto detects it from the rendered file; pick a type to pin it "
+                    "(e.g. when a workflow produces several kinds of output).")
+                outCombo.setProperty("workflow", workflow)
+                outCombo.currentIndexChanged.connect(
+                    lambda _idx, cb=outCombo: self.onWorkflowOutputTypeChanged(cb))
+                rowLayout.addWidget(outCombo)
+
                 visualizeBtn = QPushButton("Visualize")
                 visualizeBtn.setProperty("workflow", workflow)
                 visualizeBtn.clicked.connect(self.onVisualizeWorkflow)
@@ -1100,6 +1165,19 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 workflow.enabled = checkbox.isChecked()
                 logging.debug(f"Workflow '{workflow.path}' enabled set to {workflow.enabled}")
 
+    def onWorkflowOutputTypeChanged(self, combo):
+        """A workflow's Result output type override was changed in the list."""
+        workflow = combo.property("workflow")
+        if not isinstance(workflow, WorkflowAssignment):
+            return
+        workflow.outputType = combo.currentData() or ""
+        self.setProjectModified(True)
+        # The Result port type/colour changed — rebuild the node editor and
+        # refresh the Auto label to reflect the new resolved type.
+        combo.setItemText(0, f"Auto ({result_port_type(workflow).title()})")
+        if hasattr(self, "refreshNodeEditor"):
+            self.refreshNodeEditor()
+
     @Slot()
     def onVisualizeWorkflow(self):
         button = self.sender()
@@ -1116,15 +1194,29 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
         except:
             pass
     def workflowLibraryDirs(self):
-        """Returns (image_dir, video_dir) of the workflow library (settings or bundled)."""
+        """
+        Fallback workflow library folder(s). Workflows are type-agnostic now, so
+        there is a single configured folder ("comfy_workflows"); the primary
+        library is ComfyUI's own user/default/workflows (see comfyUserWorkflowsDir).
+        Returns a list of directories. When nothing is configured, falls back to
+        the bundled image/video folders so imports/listing still work.
+        """
+        configured = (self.settingsManager.get("comfy_workflows")
+                      or self.settingsManager.get("comfy_image_workflows")
+                      or self.settingsManager.get("comfy_video_workflows"))
+        if configured:
+            return [configured]
         # <pkg>/workflows (this file lives in <pkg>/sdmodules/core/)
         base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "workflows")
-        image_dir = self.settingsManager.get("comfy_image_workflows") or os.path.join(base_dir, "image")
-        video_dir = self.settingsManager.get("comfy_video_workflows") or os.path.join(base_dir, "video")
-        return image_dir, video_dir
+        return [os.path.join(base_dir, "image"), os.path.join(base_dir, "video")]
 
     def _isApiWorkflowFile(self, path):
-        """True when the file parses as an API-format (renderable) workflow."""
+        """
+        True when the file is a renderable workflow: either API/prompt format,
+        or a modern UI-format graph the studio can convert on the fly (so the
+        listing matches what the running ComfyUI has). Older UI exports that
+        can't be converted offline are skipped.
+        """
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1132,13 +1224,13 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
             return False
         if not isinstance(data, dict) or not data:
             return False
-        if isinstance(data.get("nodes"), list):  # UI-format export
-            return False
+        if isinstance(data.get("nodes"), list):  # UI-format graph
+            return can_convert_ui_workflow(data)
         return any(isinstance(nd, dict) and isinstance(nd.get("inputs", {}), dict)
                    for nd in data.values())
 
     def loadWorkflows(self):
-        image_dir, video_dir = self.workflowLibraryDirs()
+        library_dirs = self.workflowLibraryDirs()
         comfy_dir = self.comfyUserWorkflowsDir()
 
         def collect_workflows(directory, recursive=False):
@@ -1161,31 +1253,45 @@ class ComfyStudioUI(ComfyStudioBase, QMainWindow):
                 logging.warning(f"Cannot list workflow directory '{directory}': {e}")
             return found
 
-        # ComfyUI's own workflow folder is the shared library (kept in sync
-        # with the embedded ComfyUI). Only API-format files are renderable;
-        # UI-format saves living there are skipped from the listing.
-        comfy_workflows = [p for p in collect_workflows(comfy_dir, recursive=True)
-                           if self._isApiWorkflowFile(p)]
-
-        # Kept as separate attributes for plugin compatibility (wizard plugin
-        # reads image_workflows/video_workflows).
-        self.image_workflows = collect_workflows(image_dir) + comfy_workflows
-        self.video_workflows = collect_workflows(video_dir)
+        # The workflow library is ComfyUI's OWN folder (<comfy>/user/default/
+        # workflows) — the exact set the running ComfyUI instance sees, kept in
+        # sync with the embedded editor. When it's the authoritative source we
+        # do NOT mix in ComfyStudio's bundled/fallback library, so the studio's
+        # list matches ComfyUI's. The bundled/fallback dirs are used only when
+        # no ComfyUI install is configured. Only API-format files are renderable;
+        # UI-format saves are skipped. Workflows are type-agnostic — the output
+        # type is detected at render time — so this is one unified list.
+        if comfy_dir and os.path.isdir(comfy_dir):
+            all_dirs = [comfy_dir]
+        else:
+            all_dirs = list(library_dirs)
+        unified = []
+        for directory in all_dirs:
+            unified += [p for p in collect_workflows(directory, recursive=True)
+                        if self._isApiWorkflowFile(p)]
 
         # Refresh the listing when files appear/disappear in any library dir
-        # (e.g. Ctrl+S saves from the embedded ComfyUI editor).
-        for directory in (comfy_dir, image_dir, video_dir):
-            self._watchWorkflowDir(directory)
+        # (e.g. Ctrl+S saves from the embedded ComfyUI editor, or files copied
+        # in manually). directoryChanged only fires for directories explicitly
+        # watched, so watch the whole tree — ComfyUI can save into subfolders.
+        for directory in all_dirs:
+            self._watchWorkflowDir(directory, recursive=True)
 
         # One type-agnostic list, deduped by absolute path.
         combined = []
         seen = set()
-        for wf in self.image_workflows + self.video_workflows:
+        for wf in unified:
             key = os.path.abspath(wf)
             if key not in seen:
                 seen.add(key)
                 combined.append(wf)
         combined.sort(key=lambda p: os.path.basename(p).lower())
+
+        # Kept as attributes for plugin compatibility (wizard reads
+        # image_workflows/video_workflows). Type is auto-detected now, so the
+        # whole unified list is exposed as image_workflows and video is empty.
+        self.image_workflows = list(combined)
+        self.video_workflows = []
 
         previous = self.workflowCombo.currentData()
         self.workflowCombo.blockSignals(True)

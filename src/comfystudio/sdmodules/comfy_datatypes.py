@@ -28,8 +28,9 @@ COMFY_TYPE_COLORS = {
     "GUIDER": "#66FFFF",
     "SAMPLER": "#ECB4B4",
     "SIGMAS": "#CDFFCD",
-    # ComfyStudio-specific: a rendered video file.
+    # ComfyStudio-specific rendered-media types.
     "VIDEO": "#4DD0E1",
+    "AUDIO": "#F48FB1",
     # Widget primitives are grey in ComfyUI.
     "INT": "#A9A9A9",
     "FLOAT": "#A9A9A9",
@@ -39,6 +40,43 @@ COMFY_TYPE_COLORS = {
 DEFAULT_TYPE_COLOR = "#9A9A9A"  # unknown / "*"
 
 WILDCARD = "*"
+
+# The rendered-media types a workflow's Result port can carry. These are the
+# choices offered when a user manually overrides a workflow's output type
+# (auto-detection is the empty string "").
+RESULT_MEDIA_TYPES = ("IMAGE", "VIDEO", "AUDIO", "STRING")
+
+# (stored value, human label) pairs for the per-workflow output-type selector.
+# "" means "Auto" — detect from the actual rendered file.
+RESULT_TYPE_CHOICES = (
+    ("", "Auto"),
+    ("IMAGE", "Image"),
+    ("VIDEO", "Video"),
+    ("AUDIO", "Audio"),
+    ("STRING", "Text"),
+)
+
+# File extensions -> rendered-media type, for auto-detecting what a render
+# actually produced.
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tiff", ".tif"}
+_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".gifv"}
+_AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
+# Animated GIFs are emitted by video nodes (VHS etc.); treat as VIDEO when the
+# producing node says so, but a bare .gif file defaults to IMAGE below.
+
+
+def detect_media_type(path, default="IMAGE") -> str:
+    """Best-effort rendered-media type from a file path's extension."""
+    if not path:
+        return default
+    ext = ("." + path.rsplit(".", 1)[-1].lower()) if "." in path else ""
+    if ext in _VIDEO_EXTS:
+        return "VIDEO"
+    if ext in _AUDIO_EXTS:
+        return "AUDIO"
+    if ext in _IMAGE_EXTS:
+        return "IMAGE"
+    return default
 
 # Param widget type -> canonical port type.
 _PARAM_TYPE_MAP = {
@@ -83,9 +121,17 @@ def param_port_type(param) -> str:
 
 def result_port_type(workflow) -> str:
     """
-    Type of a workflow's implicit Result port: what the last render actually
-    produced, falling back to the declared isVideo hint before the first run.
+    Type of a workflow's implicit Result port. Priority:
+      1. an explicit manual override (workflow.outputType),
+      2. the type auto-detected from the last render (workflow.lastOutputType),
+      3. the legacy isVideo hint (before the first run).
     """
+    override = (getattr(workflow, "outputType", "") or "").upper()
+    if override:
+        return override
+    detected = (getattr(workflow, "lastOutputType", "") or "").upper()
+    if detected:
+        return detected
     if getattr(workflow, "lastOutput", ""):
         return "VIDEO" if getattr(workflow, "lastOutputIsVideo", False) else "IMAGE"
     return "VIDEO" if getattr(workflow, "isVideo", False) else "IMAGE"
@@ -120,7 +166,7 @@ def infer_node_output_type(workflow_json, node_id, slot) -> str:
 def types_compatible(src_type, dst_type) -> bool:
     """
     Connection rule: equal types match, "*" matches anything, STRING inputs
-    additionally accept rendered files (IMAGE/VIDEO — chaining passes file
+    additionally accept rendered files (IMAGE/VIDEO/AUDIO — chaining passes file
     paths as strings), and FLOAT inputs accept INT.
     """
     s = (src_type or WILDCARD).upper()
@@ -129,7 +175,7 @@ def types_compatible(src_type, dst_type) -> bool:
         return True
     if s == d:
         return True
-    if d == "STRING" and s in ("IMAGE", "VIDEO"):
+    if d == "STRING" and s in ("IMAGE", "VIDEO", "AUDIO"):
         return True
     if d == "FLOAT" and s == "INT":
         return True

@@ -194,23 +194,21 @@ class SettingsDialog(QDialog):
         comfyMainLayout.addWidget(self.comfyMainBrowseBtn)
         layout.addRow("Comfy Main Path:", comfyMainLayout)
 
-        # Comfy Image Workflows with Browse Button
-        self.comfyImageWorkflowEdit = QLineEdit(self.settingsManager.get("comfy_image_workflows", ""))
-        self.comfyImageWorkflowBrowseBtn = QPushButton("Browse")
-        self.comfyImageWorkflowBrowseBtn.clicked.connect(self.browse_comfy_image_workflows)
-        comfyImageWorkflowLayout = QHBoxLayout()
-        comfyImageWorkflowLayout.addWidget(self.comfyImageWorkflowEdit)
-        comfyImageWorkflowLayout.addWidget(self.comfyImageWorkflowBrowseBtn)
-        layout.addRow("Comfy Image Workflows:", comfyImageWorkflowLayout)
-
-        # Comfy Video Workflows with Browse Button
-        self.comfyVideoWorkflowEdit = QLineEdit(self.settingsManager.get("comfy_video_workflows", ""))
-        self.comfyVideoWorkflowBrowseBtn = QPushButton("Browse")
-        self.comfyVideoWorkflowBrowseBtn.clicked.connect(self.browse_comfy_video_workflows)
-        comfyVideoWorkflowLayout = QHBoxLayout()
-        comfyVideoWorkflowLayout.addWidget(self.comfyVideoWorkflowEdit)
-        comfyVideoWorkflowLayout.addWidget(self.comfyVideoWorkflowBrowseBtn)
-        layout.addRow("Comfy Video Workflows:", comfyVideoWorkflowLayout)
+        # Comfy Workflows folder with Browse Button. Workflows are type-agnostic
+        # now (the output type is detected at render time), so this is a single
+        # optional fallback library folder — the primary library is ComfyUI's own
+        # user/default/workflows, derived from the Comfy Main Path above.
+        # Migrate the old split image/video settings into the unified one.
+        workflows_dir = (self.settingsManager.get("comfy_workflows", "")
+                         or self.settingsManager.get("comfy_image_workflows", "")
+                         or self.settingsManager.get("comfy_video_workflows", ""))
+        self.comfyWorkflowEdit = QLineEdit(workflows_dir)
+        self.comfyWorkflowBrowseBtn = QPushButton("Browse")
+        self.comfyWorkflowBrowseBtn.clicked.connect(self.browse_comfy_workflows)
+        comfyWorkflowLayout = QHBoxLayout()
+        comfyWorkflowLayout.addWidget(self.comfyWorkflowEdit)
+        comfyWorkflowLayout.addWidget(self.comfyWorkflowBrowseBtn)
+        layout.addRow("Comfy Workflows Folder:", comfyWorkflowLayout)
 
         # Buttons
         btnLayout = QHBoxLayout()
@@ -224,8 +222,7 @@ class SettingsDialog(QDialog):
         cancelBtn.clicked.connect(self.reject)
 
     def browse_comfy_py_path(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        # PyQt6 has no QFileDialog.Options() factory — pass no options.
         if sys.platform.startswith('win'):
             filter_str = "Python Executable (*.exe);;All Files (*)"
         else:
@@ -234,15 +231,12 @@ class SettingsDialog(QDialog):
             self,
             "Select Comfy Python Executable",
             self.comfyPyPathEdit.text(),
-            filter_str,
-            options=options
+            filter_str
         )
         if file_path:
             self.comfyPyPathEdit.setText(file_path)
 
     def browse_comfy_main_path(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
         if sys.platform.startswith('win'):
             filter_str = "Executable Files (*.exe);;All Files (*)"
         else:
@@ -251,31 +245,20 @@ class SettingsDialog(QDialog):
             self,
             "Select Comfy Main Executable",
             self.comfyMainPathEdit.text(),
-            filter_str,
-            options=options
+            filter_str
         )
         if file_path:
             self.comfyMainPathEdit.setText(file_path)
 
-    def browse_comfy_image_workflows(self):
+    def browse_comfy_workflows(self):
         directory = QFileDialog.getExistingDirectory(
             self,
-            "Select Comfy Image Workflows Folder",
-            self.comfyImageWorkflowEdit.text(),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+            "Select Comfy Workflows Folder",
+            self.comfyWorkflowEdit.text(),
+            QFileDialog.Option.ShowDirsOnly
         )
         if directory:
-            self.comfyImageWorkflowEdit.setText(directory)
-
-    def browse_comfy_video_workflows(self):
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            "Select Comfy Video Workflows Folder",
-            self.comfyVideoWorkflowEdit.text(),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
-        )
-        if directory:
-            self.comfyVideoWorkflowEdit.setText(directory)
+            self.comfyWorkflowEdit.setText(directory)
 
     def accept(self):
         selected_lang_code = self.lang_combo.currentData()
@@ -283,8 +266,12 @@ class SettingsDialog(QDialog):
         self.settingsManager.set("comfy_ip", self.comfyIpEdit.text().strip())
         self.settingsManager.set("comfy_py_path", self.comfyPyPathEdit.text().strip())
         self.settingsManager.set("comfy_main_path", self.comfyMainPathEdit.text().strip())
-        self.settingsManager.set("comfy_image_workflows", self.comfyImageWorkflowEdit.text().strip())
-        self.settingsManager.set("comfy_video_workflows", self.comfyVideoWorkflowEdit.text().strip())
+        workflows_dir = self.comfyWorkflowEdit.text().strip()
+        self.settingsManager.set("comfy_workflows", workflows_dir)
+        # Keep the legacy keys in sync so older code paths and downgrades still
+        # resolve the same library folder.
+        self.settingsManager.set("comfy_image_workflows", workflows_dir)
+        self.settingsManager.set("comfy_video_workflows", workflows_dir)
         self.settingsManager.set("language", selected_lang_code)
         self.settingsManager.save()
         super().accept()

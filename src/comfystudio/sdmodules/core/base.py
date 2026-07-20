@@ -40,6 +40,10 @@ from comfystudio.sdmodules.cs_datastruts import (
     node_output_port_node_id,
     workflow_param_port_id,
 )
+from comfystudio.sdmodules.comfy_workflow_convert import (
+    can_convert_ui_workflow,
+    ui_workflow_to_api,
+)
 from comfystudio.sdmodules.localization import LocalizationManager
 from comfystudio.sdmodules.settings import SettingsManager
 from comfystudio.sdmodules.vareditor import DynamicParamEditor, DynamicParam
@@ -237,9 +241,12 @@ class ComfyStudioBase:
 
     def loadWorkflowJson(self, workflow_path):
         """
-        Loads and validates a ComfyUI workflow JSON file (API format).
+        Loads and validates a ComfyUI workflow JSON file, returning API/prompt
+        format. UI-format graphs (as saved by ComfyUI's own workflow browser)
+        are converted on the fly when they carry modern widget annotations, so
+        the studio can render the exact workflows the running ComfyUI has.
         Raises ValueError with a user-friendly message when the file is missing,
-        malformed, or saved in the UI (non-API) export format.
+        malformed, or in an older UI format that can't be converted offline.
         """
         if not workflow_path or not os.path.isfile(workflow_path):
             raise ValueError(f"Workflow file not found:\n{workflow_path}")
@@ -250,13 +257,18 @@ class ComfyStudioBase:
             raise ValueError(f"Workflow file is not valid JSON:\n{workflow_path}\n\n{e}")
         if not isinstance(workflow_json, dict) or not workflow_json:
             raise ValueError(f"Workflow file has an unexpected structure:\n{workflow_path}")
-        # UI-format exports have "nodes"/"links" lists instead of node-id keyed dicts.
+        # UI-format graphs have "nodes"/"links" lists instead of a node-id keyed
+        # dict. Convert modern (widget-annotated) ones; reject older exports.
         if isinstance(workflow_json.get("nodes"), list):
-            raise ValueError(
-                f"'{os.path.basename(workflow_path)}' appears to be saved in ComfyUI's UI format.\n\n"
-                "Please re-export it from ComfyUI using 'Save (API Format)' "
-                "(enable Dev mode options in ComfyUI settings) and try again."
-            )
+            if can_convert_ui_workflow(workflow_json):
+                workflow_json = ui_workflow_to_api(workflow_json)
+            else:
+                raise ValueError(
+                    f"'{os.path.basename(workflow_path)}' is saved in an older ComfyUI UI "
+                    "format that can't be converted automatically.\n\n"
+                    "Open and re-save it in a recent ComfyUI, or export it using "
+                    "'Save (API Format)' (enable Dev mode options in ComfyUI settings)."
+                )
         # Sanity-check that at least one entry looks like an API-format node.
         has_valid_node = any(
             isinstance(nd, dict) and isinstance(nd.get("inputs", {}), dict)

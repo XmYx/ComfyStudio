@@ -63,6 +63,13 @@ class WorkflowAssignment:
     enabled: bool = True
     parameters: Dict[str, Any] = field(default_factory=dict)
     isVideo: bool = False
+    # Manual override of the Result port's media type ("" = auto-detect from the
+    # rendered file). One of comfy_datatypes.RESULT_MEDIA_TYPES when set. Lets a
+    # user pin the type when a workflow produces several kinds of output.
+    outputType: str = ""
+    # Media type auto-detected from the most recent render ("IMAGE"/"VIDEO"/
+    # "AUDIO"/"STRING"); the source of truth for chaining when no override is set.
+    lastOutputType: str = ""
     lastSignature: str = field(default_factory=str)
     versions: List[Dict[str, Any]] = field(default_factory=list)  # New field for version snapshots
     # Index of the version currently selected in the UI dropdown (0 == placeholder / latest params).
@@ -86,6 +93,8 @@ class WorkflowAssignment:
             "enabled": self.enabled,
             "parameters": self.parameters,
             "isVideo": self.isVideo,
+            "outputType": self.outputType,
+            "lastOutputType": self.lastOutputType,
             "lastSignature": self.lastSignature,
             "versions": self.versions,  # Include versions when serializing
             "selected_version_index": self.selected_version_index,
@@ -102,6 +111,11 @@ class WorkflowAssignment:
             enabled=data.get('enabled', True),
             parameters=data.get('parameters', {}),
             isVideo=data.get('isVideo', False),
+            outputType=data.get('outputType', "") or "",
+            # Backfill the detected type for projects saved before this field:
+            # derive it from the legacy isVideo flag of the last render.
+            lastOutputType=(data.get('lastOutputType')
+                            or ("VIDEO" if data.get('lastOutputIsVideo') else "")),
             lastSignature=data.get('lastSignature', ""),
             versions=data.get('versions', []),  # Load versions if present
             selected_version_index=data.get('selected_version_index', 0),

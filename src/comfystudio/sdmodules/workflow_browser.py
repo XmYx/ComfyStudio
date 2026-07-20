@@ -551,16 +551,16 @@ class WorkflowBrowserDialog(QDialog):
         # 1) API format (usable by shots directly) — into ComfyUI's own
         # workflow folder when an install is configured, so the embedded
         # ComfyUI sees the same library as ComfyStudio's listing. Falls back
-        # to the legacy image/video library dirs otherwise.
+        # to the configured/bundled workflow library folder otherwise.
         if workflows["api"]:
             lib_dir = None
             dest_label = "ComfyUI workflows"
             if hasattr(self.main, "comfyUserWorkflowsDir"):
                 lib_dir = self.main.comfyUserWorkflowsDir(create=True)
             if not lib_dir:
-                image_dir, video_dir = self.main.workflowLibraryDirs()
-                lib_dir = video_dir if is_video else image_dir
-                dest_label = f"Library ({'video' if is_video else 'image'})"
+                library_dirs = self.main.workflowLibraryDirs()
+                lib_dir = library_dirs[0] if library_dirs else None
+                dest_label = "Library"
             try:
                 os.makedirs(lib_dir, exist_ok=True)
                 lib_path = unique_path(lib_dir, name)

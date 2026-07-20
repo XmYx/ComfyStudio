@@ -26,6 +26,7 @@ from qtpy.QtWidgets import (
 )
 
 from comfystudio.sdmodules.comfy_installer import ComfyInstallerWizard
+from comfystudio.sdmodules.comfy_datatypes import detect_media_type
 from comfystudio.sdmodules.cs_datastruts import (
     RESULT_PORT,
     Shot,
@@ -562,6 +563,8 @@ class ComfyStudioComfyHandler:
                 # Backfill for projects saved before lastOutput existed.
                 src_wf.lastOutput = out
                 src_wf.lastOutputIsVideo = bool(version.get("is_video"))
+                src_wf.lastOutputType = (version.get("output_type")
+                                         or detect_media_type(out))
                 return out
         # Last resort: the shot-level outputs (pre-graph projects).
         want_video = src_wf.lastOutputIsVideo or bool(target_param.get("usePrevResultVideo"))
@@ -854,31 +857,57 @@ class ComfyStudioComfyHandler:
             self.processNextWorkflow()
             return
 
-        # One produced file per output node (first image, else first gif); the
-        # first node's file stays the workflow's main result, the rest feed
-        # exposed node-output ports on the shot graph.
-        node_files = {}  # node_id -> (comfy_path, is_video)
-        final_path = None
-        final_is_video = False
+        # One produced file per output node (first image, else gif/video, else
+        # audio); the first node's file stays the workflow's main result, the
+        # rest feed exposed node-output ports on the shot graph. The media type
+        # is detected from ComfyUI's output bucket, refined by file extension.
+        node_files = {}  # node_id -> (comfy_path, media_type)
         for node_id, output_data in outputs.items():
             entry = None
             for image_info in output_data.get("images", []):
                 filename = image_info.get("filename")
                 if filename:
                     subfolder = image_info.get("subfolder", "")
-                    entry = (os.path.join(subfolder, filename) if subfolder else filename, False)
+                    rel = os.path.join(subfolder, filename) if subfolder else filename
+                    # A SaveImage node emits .png; but some nodes stuff videos in
+                    # the "images" bucket — trust the extension over the bucket.
+                    entry = (rel, detect_media_type(filename, default="IMAGE"))
                     break
             if entry is None:
                 for gif_info in output_data.get("gifs", []):
                     filename = gif_info.get("filename")
                     if filename:
                         subfolder = gif_info.get("subfolder", "")
-                        entry = (os.path.join(subfolder, filename) if subfolder else filename, True)
+                        rel = os.path.join(subfolder, filename) if subfolder else filename
+                        # The "gifs" bucket is what VHS/video nodes use — animated
+                        # gifs and real videos alike; default such files to VIDEO.
+                        entry = (rel, detect_media_type(filename, default="VIDEO"))
+                        break
+            if entry is None:
+                for audio_info in output_data.get("audio", []):
+                    filename = audio_info.get("filename")
+                    if filename:
+                        subfolder = audio_info.get("subfolder", "")
+                        rel = os.path.join(subfolder, filename) if subfolder else filename
+                        entry = (rel, detect_media_type(filename, default="AUDIO"))
                         break
             if entry is not None:
                 node_files[str(node_id)] = entry
-                if final_path is None:
-                    final_path, final_is_video = entry
+
+        # Pick the "final" output that becomes this workflow's Result. Normally
+        # the first produced file; but when the user pinned an output type
+        # override, prefer the first file matching it (a workflow may emit e.g.
+        # both an image and audio — the override says which one matters).
+        final_path = None
+        final_type = "IMAGE"
+        ordered = list(node_files.values())
+        override = (getattr(workflow, "outputType", "") or "").upper()
+        if override:
+            match = next((e for e in ordered if e[1] == override), None)
+            if match is not None:
+                final_path, final_type = match
+        if final_path is None and ordered:
+            final_path, final_type = ordered[0]
 
         if final_path:
             # Download from Comfy's output folder to our project or temp folder
@@ -899,16 +928,17 @@ class ComfyStudioComfyHandler:
             timestamp = int(time.time())
             new_full = None
             workflow.lastNodeOutputs = {}
-            for out_node_id, (comfy_path, is_video) in node_files.items():
+            # Subfolder per media type: stills / videos / audio / text.
+            _type_subfolder = {"IMAGE": "stills", "VIDEO": "videos",
+                               "AUDIO": "audio", "STRING": "text"}
+            for out_node_id, (comfy_path, media_type) in node_files.items():
                 local_path = self.downloadComfyFile(comfy_path)
                 if not local_path:
                     continue
                 ext = os.path.splitext(local_path)[1]
-                # Choose subfolder based on media type.
-                if is_video or workflow.isVideo:
-                    subfolder = os.path.join(project_folder, "videos")
-                else:
-                    subfolder = os.path.join(project_folder, "stills")
+                # Choose subfolder based on the detected media type.
+                subfolder = os.path.join(
+                    project_folder, _type_subfolder.get(media_type, "stills"))
                 if not os.path.exists(subfolder):
                     os.makedirs(subfolder, exist_ok=True)
                 is_final = (comfy_path == final_path)
@@ -930,13 +960,16 @@ class ComfyStudioComfyHandler:
                     new_full = dest
 
             if new_full:
+                final_is_video = (final_type == "VIDEO")
                 # --- IMPORTANT: Update the Shot with the new file path *now*, so the next workflow can see it ---
-                if final_is_video or workflow.isVideo:
+                # Only image/video results have a dedicated shot slot; audio and
+                # text results still chain through workflow.lastOutput below.
+                if final_is_video:
                     shot.videoPath = new_full
                     shot.videoVersions.append(new_full)
                     shot.currentVideoVersion = len(shot.videoVersions) - 1
                     shot.lastVideoSignature = self.computeRenderSignature(shot, isVideo=True)
-                else:
+                elif final_type == "IMAGE":
                     shot.stillPath = new_full
                     shot.imageVersions.append(new_full)
                     shot.currentImageVersion = len(shot.imageVersions) - 1
@@ -944,15 +977,17 @@ class ComfyStudioComfyHandler:
 
                 new_version = {
                     "params": copy.deepcopy(workflow.parameters),  # snapshot of current workflow params
-                    "output": new_full,  # path to the rendered still or video
-                    "is_video": (final_is_video or workflow.isVideo),
+                    "output": new_full,  # path to the rendered result
+                    "is_video": final_is_video,
+                    "output_type": final_type,
                     "timestamp": time.time()  # optionally, store when this version was created
                 }
 
                 workflow.versions.append(new_version)
                 # This workflow's Result port (feeds graph connections).
                 workflow.lastOutput = new_full
-                workflow.lastOutputIsVideo = (final_is_video or workflow.isVideo)
+                workflow.lastOutputType = final_type
+                workflow.lastOutputIsVideo = final_is_video
 
                 # Mark this workflow's own signature, so we don't re-render if nothing changed
                 workflow.lastSignature = self.computeRenderSignature(shot, isVideo=workflow.isVideo)
@@ -961,7 +996,7 @@ class ComfyStudioComfyHandler:
                 self.updateList()
 
                 # Notify other parts (e.g. preview dock)
-                self.shotRenderComplete.emit(shotIndex, workflowIndex, new_full, (final_is_video or workflow.isVideo))
+                self.shotRenderComplete.emit(shotIndex, workflowIndex, new_full, final_is_video)
 
         # Move on regardless of success/failure to next workflow in queue
         # self.workflowIndexInProgress += 1

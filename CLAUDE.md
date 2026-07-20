@@ -60,8 +60,18 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 - `to_dict()` saves **raw** duration; `from_dict()` maps it to `default_duration`
   (fallback when the video file is unreadable).
 - `WorkflowAssignment.selected_version_index` persists which version dropdown entry
-  is active; version snapshots live in `versions` (`{params, output, is_video, timestamp}`).
-  Restoring a version deep-copies `params` — never assign the snapshot by reference.
+  is active; version snapshots live in `versions` (`{params, output, is_video,
+  output_type, timestamp}`). Restoring a version deep-copies `params` — never
+  assign the snapshot by reference.
+- Workflows are **type-agnostic**: `WorkflowAssignment.outputType` is a manual
+  override of the Result port's media type (`""` = auto). `lastOutputType` is the
+  type auto-detected from the last render (`IMAGE`/`VIDEO`/`AUDIO`/`STRING`).
+  `result_port_type()` prefers override → `lastOutputType` → the legacy `isVideo`
+  hint. `onComfyResult` detects the type per output node from ComfyUI's output
+  bucket (`images`/`gifs`/`audio`) refined by file extension
+  (`comfy_datatypes.detect_media_type`); when an override is set it also selects
+  which of several outputs becomes the Result. `isVideo`/`lastOutputIsVideo` are
+  kept for back-compat and derived from the type.
 - `WorkflowAssignment.uid` is a stable identity **within one shot** (generated in
   `__post_init__`, repaired by `ensure_unique_workflow_uids(shot)` after deepcopies —
   called from `Shot.from_dict`, `addWorkflowToShot`, `extendClip`). Deepcopied shots
@@ -92,12 +102,13 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
   `syncWorkflowFromFile` when the node disappears).
 - Port datatypes (`sdmodules/comfy_datatypes.py`): ports carry ComfyUI-convention
   types and colours (`COMFY_TYPE_COLORS`; edges take the source type's colour).
-  Param ports map widget types (INT/FLOAT/BOOLEAN/STRING); Result is IMAGE/VIDEO
-  (last render, else the isVideo hint); node-output types are inferred **at exposure
+  Param ports map widget types (INT/FLOAT/BOOLEAN/STRING); Result type comes from
+  `result_port_type` (override → detected `lastOutputType` → isVideo hint), one of
+  IMAGE/VIDEO/AUDIO/STRING; node-output types are inferred **at exposure
   time** by `infer_node_output_type` (consumer input name → type, else class-name
   heuristic, else `"*"` wildcard) and stored in the exposure entry.
   `types_compatible` gates `tryConnect`: equal types or `"*"` match; STRING inputs
-  additionally accept IMAGE/VIDEO (chaining passes file paths); FLOAT accepts INT;
+  additionally accept IMAGE/VIDEO/AUDIO (chaining passes file paths); FLOAT accepts INT;
   everything else is refused with a status message. Existing connections are never
   retro-validated. At render time `onComfyResult`
   records one file per output node in `workflow.lastNodeOutputs` (`{node_id: path}`);
@@ -119,9 +130,16 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
 
 ## Workflows (ComfyUI)
 
-- Only **API-format** workflow JSON is supported (node-id-keyed dict). UI-format exports
-  (`{"nodes": [...]}`) are rejected by `base.py::loadWorkflowJson` with a user-facing
-  message. `extractWorkflowParams` exposes only literal int/float/bool/string inputs;
+- Workflows render in **API/prompt format** (node-id-keyed dict). UI-format graphs
+  (`{"nodes": [...], "links": [...]}`, what ComfyUI's own browser saves) are
+  **converted on the fly** by `base.py::loadWorkflowJson` via
+  `comfy_workflow_convert.ui_workflow_to_api` — but only the **modern**
+  widget-annotated format (each node's `inputs` entry carries a `widget` name, so
+  widget→value mapping is embedded; no `/object_info` needed). Older UI exports
+  (bare `widgets_values`, no widget names — the `control_after_generate` slot can't
+  be placed reliably offline) fail `can_convert_ui_workflow` and are rejected with a
+  "re-save in a recent ComfyUI" message and skipped from the listing.
+  `extractWorkflowParams` exposes only literal int/float/bool/string inputs;
   list/tuple/dict values are node links and are skipped. `nodeIDs` are stored as strings.
 - Param dict shape: `{name, type, value, nodeIDs, displayName, visible, nodeMetaTitle}`
   plus optional `usePrevResultImage/Video`, `useApiImage`, `dynamicOverrides`,
@@ -130,18 +148,31 @@ Methods defined in `ui.py`/`base.py` shadow same-named legacy ones in `shot_mana
   workflow, and `executeWorkflow`'s prev-result overrides feed `shot.stillPath` /
   `shot.videoPath` based on what the param asks for (`usePrevResultImage/Video`), not on
   the previous workflow's declared `isVideo`.
-- The UI lists workflows in **one** combo (`workflowCombo`, filled by `loadWorkflows`).
+- The UI lists workflows in **one** combo (`workflowCombo`, filled by `loadWorkflows`),
+  with a manual refresh button (`refreshWorkflows`) beside it. Each assigned-workflow
+  row also has an **Output** type selector (Auto/Image/Video/Audio/Text →
+  `WorkflowAssignment.outputType`; `onWorkflowOutputTypeChanged` rebuilds the node
+  editor since the Result port type changes).
   The **shared library is ComfyUI's own `user/default/workflows`**
   (`base.py::comfyUserWorkflowsDir`, derived from `comfy_main_path`): `loadWorkflows`
-  scans it recursively (API-format files only — UI-format saves there are skipped),
-  the example importer saves API workflows into it (legacy image/video dirs are the
-  fallback when no install is configured), and a `QFileSystemWatcher`
-  `directoryChanged` hook (`_onWorkflowDirChanged`, debounced) refreshes the combo
-  when files appear — e.g. Ctrl+S saves from the embedded editor. The bundled
+  scans it recursively (API-format files plus convertible modern UI-format graphs;
+  older UI exports are skipped — see `_isApiWorkflowFile`)
+  and, when it exists, it is the **authoritative and only** source — the bundled/
+  fallback library is NOT mixed in, so the studio's list matches what the running
+  ComfyUI instance sees. Fallback dirs apply only when no install is configured.
+  The example importer saves API workflows into it (the single configured
+  `comfy_workflows` folder, else the bundled dirs, are the fallback when no install is
+  configured), and a `QFileSystemWatcher` `directoryChanged` hook
+  (`_onWorkflowDirChanged`, debounced) refreshes the combo when files appear —
+  `_watchWorkflowDir(recursive=True)` watches subfolders too, so Ctrl+S saves from
+  the embedded editor and manual copies into subdirs are picked up. The bundled
   image/video default workflows were removed (outdated); `workflows/llm` stays
-  (wizard plugin). `isVideo` is only a hint (output subfolder naming); the real
-  result type is detected in `onComfyResult`. Keep the
-  `image_workflows`/`video_workflows` attributes and the `addWorkflowToShot(path,
+  (wizard plugin). Settings expose a **single** "Comfy Workflows Folder"
+  (`comfy_workflows`; old `comfy_image_workflows`/`comfy_video_workflows` are migrated
+  and kept in sync). `workflowLibraryDirs()` returns a **list** of fallback dirs.
+  `isVideo` is only a legacy hint; the real result type is detected in
+  `onComfyResult`. Keep the `image_workflows` (now the full unified list) /
+  `video_workflows` (now empty) attributes and the `addWorkflowToShot(path,
   isVideo=)` signature — `plugins/wizard.py` depends on them.
 - Example import (`workflow_browser.py`): parses the examples site with stdlib
   `HTMLParser`; extracts embedded workflows from PNG tEXt/iTXt/zTXt chunks and, as a
@@ -222,8 +253,14 @@ startup (`main.py`) and on settings change (`ui.py::applyTheme`). Themes: `dark`
   directly. **`app.exec()` never returns under offscreen** (pre-existing; likely the
   QMediaPlayer in the preview dock) — don't rely on the event loop returning; use
   `app.processEvents()` in polling loops and `os._exit(0)` to end test scripts.
-- This dev machine: Python 3.9 (miniconda) as `python3`, newest is
-  `/usr/local/bin/python3.12`; `PyQt6-WebEngine` is **not** installed (browser features
-  can't be exercised headlessly); `ffmpeg`/`ffprobe` exist (pyenv shims) — generate test
-  media with `-f lavfi -i testsrc=...` / `sine=...`.
+- This dev machine: Python 3.9 (miniconda) as `python3` (own PyQt6, no WebEngine),
+  newest is `/usr/local/bin/python3.12`; the app venv is `./venv` (Python 3.11,
+  PyQt6 ≥ 6.8 **with** WebEngine) — run GUI/WebEngine tests with `venv/bin/python`.
+  `ffmpeg`/`ffprobe` exist (pyenv shims) — generate test media with
+  `-f lavfi -i testsrc=...` / `sine=...`.
+- **Never pin/downgrade Qt to 6.6**: QtWebEngine 6.6's Chromium segfaults on
+  macOS 26 the moment a dock hosting a loaded QWebEngineView is hidden/resized
+  (crash: `QWidget::hide` in QMainWindowLayout, thread `CrBrowserMain`).
+  setup.py requires PyQt6 ≥ 6.8 for this reason. PyQt6 also has no
+  `QFileDialog.Options()` — use no options arg / `QFileDialog.Option.*`.
 - No test suite exists; verify with `python -m py_compile` plus small inline scripts.
